@@ -24,6 +24,7 @@ src/
 - **Advanced DSP Engine**: Powered by `NumPy` and `SciPy`, provides Welch's method PSD, spectrograms, noise-floor estimation, spectral peak detection, signal region detection, SNR estimation, and occupied bandwidth measurement.
 - **Interactive GUI**: Built on **PySide6** and **PyQtGraph**. Dark-themed UI with `QThreadPool` worker architecture to prevent UI freezing during intensive DSP tasks.
 - **Analysis Pipeline**: Orchestrated processing chain (validate → preprocess → detect → measure → report) with full provenance tracking.
+- **Synthetic Signal Generation**: Includes built-in generators for BPSK, QPSK, and 2-FSK signals, along with realistic channel impairment models (AWGN, frequency offsets, IQ imbalances, phase noise) for robust testing and validation.
 
 ## Getting Started
 
