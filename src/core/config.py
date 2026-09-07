@@ -10,7 +10,6 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-
 _DEFAULT_CONFIG_DIR = Path.home() / ".sigma"
 
 
@@ -68,7 +67,7 @@ class AppConfig:
     schema_version: str = "1.0.0"
 
     @classmethod
-    def load(cls, config_path: Path | None = None) -> "AppConfig":
+    def load(cls, config_path: Path | None = None) -> AppConfig:
         """Load configuration from TOML, falling back to defaults.
 
         Environment variables like ``SIGMA_PROCESSING_MAX_WORKERS=8`` override

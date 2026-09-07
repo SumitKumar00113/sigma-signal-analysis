@@ -6,7 +6,8 @@ thread, with progress reporting and cancellation support.
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal, Slot
 
@@ -89,7 +90,7 @@ class WorkerPool:
         self._pool.setMaxThreadCount(4)
 
     @classmethod
-    def instance(cls) -> "WorkerPool":
+    def instance(cls) -> WorkerPool:
         if cls._instance is None:
             cls._instance = cls()
         return cls._instance

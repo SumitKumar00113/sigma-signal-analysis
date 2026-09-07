@@ -6,9 +6,8 @@ Supports JSON metadata export, HTML reports, and PNG plot snapshots.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
 
 from src.core.models import AnalysisResult, RecordingMetadata
 
@@ -32,7 +31,7 @@ def export_html_report(
     plot_paths: list[str] | None = None,
 ) -> None:
     """Generate a basic HTML analysis report."""
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
 
     plots_html = ""
     if plot_paths:

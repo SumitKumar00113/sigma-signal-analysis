@@ -25,7 +25,6 @@ from src.ingestion.base import FileReader
 from src.ingestion.normalizer import bytes_per_sample, normalize_samples
 from src.ingestion.validator import compute_checksum, validate_file_basics, validate_samples
 
-
 # Mapping from SigMF core:datatype strings to our enum
 _SIGMF_DTYPE_MAP: dict[str, SampleDatatype] = {
     "cf32_le": SampleDatatype.CF32_LE,
@@ -107,7 +106,7 @@ class SigMFReader(FileReader):
             raise FileNotFoundError(
                 f"SigMF metadata file not found for {self.path}"
             )
-        with open(self._meta_path, "r", encoding="utf-8") as f:
+        with open(self._meta_path, encoding="utf-8") as f:
             self._meta = json.load(f)
         return self._meta
 
@@ -175,7 +174,7 @@ class SigMFReader(FileReader):
         return report
 
     def read_metadata(self) -> RecordingMetadata:
-        meta = self._ensure_meta()
+        self._ensure_meta()
         g = self._global
         dt = self._datatype()
         bps = bytes_per_sample(dt)

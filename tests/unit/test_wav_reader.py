@@ -1,12 +1,13 @@
 """Unit tests for the WAV file reader."""
 
-import numpy as np
-import pytest
 from pathlib import Path
 
-from tests.fixtures.generate_fixtures import generate_tone_wav, generate_stereo_iq_wav
+import numpy as np
+import pytest
+
 from src.core.enums import FileFormat, WavInterpretation
 from src.ingestion.wav_reader import WavReader
+from tests.fixtures.generate_fixtures import generate_stereo_iq_wav, generate_tone_wav
 
 
 @pytest.fixture

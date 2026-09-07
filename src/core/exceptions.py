@@ -19,7 +19,7 @@ class FileError(SigmaError):
     """Base class for file-related errors."""
 
 
-class FileNotFoundError_(FileError):
+class FileNotFoundSigmaError(FileError):
     """Recording file does not exist or is inaccessible."""
 
 
@@ -31,7 +31,7 @@ class FileTruncatedError(FileError):
     """File appears to be cut short (sample count doesn't match header)."""
 
 
-class FilePermissionError_(FileError):
+class FilePermissionSigmaError(FileError):
     """Insufficient permissions to read the recording file."""
 
 

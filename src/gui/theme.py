@@ -6,7 +6,7 @@ scientifically-appropriate colour maps for signal visualisation.
 
 from __future__ import annotations
 
-from PySide6.QtGui import QColor, QFont, QPalette
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QApplication
 
 # ---------------------------------------------------------------------------

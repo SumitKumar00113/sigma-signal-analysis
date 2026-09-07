@@ -8,8 +8,7 @@ They map directly to the data model defined in PRD §21.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
-from pathlib import Path
+from datetime import UTC, datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -28,7 +27,6 @@ from src.core.enums import (
     WavInterpretation,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -38,7 +36,7 @@ def _uuid() -> str:
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 # ---------------------------------------------------------------------------

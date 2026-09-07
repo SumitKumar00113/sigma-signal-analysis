@@ -9,8 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import numpy as np
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -264,7 +263,9 @@ class InputWizard(QDialog):
             self,
             "Select Recording File",
             "",
-            "All Supported (*.wav *.iq *.cf32 *.cs16 *.cu8 *.sigmf-meta *.sigmf-data *.sigmf-archive);;"
+            "All Supported ("
+            "*.wav *.iq *.cf32 *.cs16 *.cu8 "
+            "*.sigmf-meta *.sigmf-data *.sigmf-archive);;"
             "WAV Files (*.wav);;"
             "Raw IQ (*.iq *.cf32 *.cs16 *.cu8);;"
             "SigMF (*.sigmf-meta *.sigmf-data *.sigmf-archive);;"

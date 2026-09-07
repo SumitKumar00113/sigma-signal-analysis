@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Python ${{ matrix.python-version }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ["3.11", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install package
+        run: pip install -e '.[gui,dev]'
+
+      - name: Lint (ruff)
+        run: ruff check src/ tests/
+
+      - name: Run tests with coverage
+        run: pytest tests/ -v --cov=src --cov-report=term-missing --cov-report=xml
+        env:
+          QT_QPA_PLATFORM: offscreen
+
+      - name: Build wheel
+        run: pip wheel . --no-deps -w dist/
+
+      - name: Import smoke test
+        run: |
+          python -c "
+          from src.core.models import Project, RecordingMetadata, AnalysisResult
+          from src.core.enums import SampleDatatype, FileFormat, ModulationType
+          from src.core.config import AppConfig
+          from src.core.exceptions import SigmaError
+          from src.ingestion.normalizer import normalize_samples
+          from src.ingestion.validator import validate_file_basics
+          from src.dsp.spectral import analyze_spectrum, compute_psd
+          from src.dsp.preprocessing import remove_dc_mean, normalize_rms
+          from src.reporting.exporter import export_metadata_json
+          print('All imports OK')
+          "
+
+      - name: GUI smoke test
+        run: |
+          python -c "
+          import sys
+          from PySide6.QtWidgets import QApplication
+          app = QApplication(sys.argv)
+          from src.gui.main_window import MainWindow
+          w = MainWindow()
+          w.show()
+          print('GUI smoke test OK')
+          app.quit()
+          "
+        env:
+          QT_QPA_PLATFORM: offscreen
+
+      - name: Upload coverage
+        if: matrix.python-version == '3.13' && matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.xml
+
+      - name: Upload wheel
+        if: matrix.python-version == '3.13' && matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheel
+          path: dist/*.whl
