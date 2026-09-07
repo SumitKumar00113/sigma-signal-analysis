@@ -1,12 +1,13 @@
 """Unit tests for the raw IQ file reader."""
 
-import numpy as np
-import pytest
 from pathlib import Path
 
-from tests.fixtures.generate_fixtures import generate_raw_iq_cf32, generate_raw_iq_cu8
+import numpy as np
+import pytest
+
 from src.core.enums import FileFormat, IQOrder, SampleDatatype
 from src.ingestion.raw_iq_reader import RawIQReader
+from tests.fixtures.generate_fixtures import generate_raw_iq_cf32, generate_raw_iq_cu8
 
 
 @pytest.fixture

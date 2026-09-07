@@ -6,14 +6,13 @@ parameter provenance status, and job lifecycle states.
 
 from __future__ import annotations
 
-from enum import Enum, auto
-
+from enum import StrEnum
 
 # ---------------------------------------------------------------------------
 # Sample data types (SigMF-aligned naming where applicable)
 # ---------------------------------------------------------------------------
 
-class SampleDatatype(str, Enum):
+class SampleDatatype(StrEnum):
     """Binary sample format codes.
 
     Naming follows the SigMF convention:
@@ -39,14 +38,14 @@ class SampleDatatype(str, Enum):
     RU16_LE = "ru16_le"
 
 
-class IQOrder(str, Enum):
+class IQOrder(StrEnum):
     """Interleaved I/Q sample ordering."""
 
     IQ = "IQ"
     QI = "QI"
 
 
-class FileFormat(str, Enum):
+class FileFormat(StrEnum):
     """Supported recording file formats."""
 
     WAV = "wav"
@@ -54,7 +53,7 @@ class FileFormat(str, Enum):
     SIGMF = "sigmf"
 
 
-class WavInterpretation(str, Enum):
+class WavInterpretation(StrEnum):
     """How a WAV recording should be interpreted."""
 
     REAL = "real"                    # mono real-valued signal
@@ -68,7 +67,7 @@ class WavInterpretation(str, Enum):
 # Modulation taxonomy
 # ---------------------------------------------------------------------------
 
-class ModulationType(str, Enum):
+class ModulationType(StrEnum):
     """Supported and recognizable modulation types."""
 
     # Analog
@@ -113,7 +112,7 @@ class ModulationType(str, Enum):
 # Confidence & provenance
 # ---------------------------------------------------------------------------
 
-class ConfidenceLevel(str, Enum):
+class ConfidenceLevel(StrEnum):
     """Analyst-facing certainty label for an automated result."""
 
     CONFIRMED = "Confirmed"
@@ -123,7 +122,7 @@ class ConfidenceLevel(str, Enum):
     UNKNOWN = "Unknown"
 
 
-class ParameterStatus(str, Enum):
+class ParameterStatus(StrEnum):
     """How a parameter value was obtained."""
 
     PROVIDED = "provided"       # from file metadata or user entry
@@ -137,7 +136,7 @@ class ParameterStatus(str, Enum):
 # Processing lifecycle
 # ---------------------------------------------------------------------------
 
-class JobStatus(str, Enum):
+class JobStatus(StrEnum):
     """State of a background processing job."""
 
     QUEUED = "queued"
@@ -151,7 +150,7 @@ class JobStatus(str, Enum):
 # FEC families
 # ---------------------------------------------------------------------------
 
-class FECType(str, Enum):
+class FECType(StrEnum):
     """Forward error-correction family identifier."""
 
     NONE = "none"
@@ -164,7 +163,7 @@ class FECType(str, Enum):
     UNKNOWN = "unknown"
 
 
-class InterleaverType(str, Enum):
+class InterleaverType(StrEnum):
     """De-interleaving algorithm family."""
 
     NONE = "none"
@@ -179,7 +178,7 @@ class InterleaverType(str, Enum):
 # Signal detection
 # ---------------------------------------------------------------------------
 
-class DetectionMethod(str, Enum):
+class DetectionMethod(StrEnum):
     """Algorithm used to detect a candidate signal region."""
 
     ENERGY = "energy"

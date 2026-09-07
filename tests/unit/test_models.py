@@ -1,6 +1,5 @@
 """Unit tests for Pydantic data models."""
 
-from datetime import datetime, timezone
 
 from src.core.enums import (
     ConfidenceLevel,

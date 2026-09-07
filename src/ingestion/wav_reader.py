@@ -16,7 +16,6 @@ from scipy.io import wavfile
 
 from src.core.enums import (
     FileFormat,
-    IQOrder,
     ParameterStatus,
     SampleDatatype,
     WavInterpretation,
@@ -78,7 +77,7 @@ class WavReader(FileReader):
             with wave.open(str(self.path), "rb") as wf:
                 n_channels = wf.getnchannels()
                 sampwidth = wf.getsampwidth()
-                framerate = wf.getframerate()
+                _ = wf.getframerate()  # consumed but not needed here
                 n_frames = wf.getnframes()
 
             report.header_valid = True

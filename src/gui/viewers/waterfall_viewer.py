@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import numpy as np
 import pyqtgraph as pg
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
@@ -17,11 +18,9 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from PySide6.QtCore import Qt
 
 from src.dsp.spectral import compute_spectrogram
 from src.gui.theme import BG_DARKEST, TEXT_PRIMARY
-
 
 # Colour map presets (viridis-like LUT)
 _COLORMAPS = {

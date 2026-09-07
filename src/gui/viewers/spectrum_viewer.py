@@ -22,7 +22,6 @@ from src.dsp.spectral import compute_psd, detect_peaks, estimate_noise_floor
 from src.gui.theme import (
     ACCENT_DANGER,
     ACCENT_PRIMARY,
-    ACCENT_SUCCESS,
     ACCENT_WARNING,
     BG_DARKEST,
     TEXT_PRIMARY,

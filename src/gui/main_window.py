@@ -14,23 +14,19 @@ from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QDockWidget,
     QFileDialog,
-    QHBoxLayout,
     QLabel,
     QMainWindow,
     QMessageBox,
     QPlainTextEdit,
     QProgressBar,
-    QSplitter,
     QStatusBar,
     QTabWidget,
     QToolBar,
     QTreeWidget,
     QTreeWidgetItem,
-    QVBoxLayout,
-    QWidget,
 )
 
-from src.core.enums import FileFormat, WavInterpretation
+from src.core.enums import FileFormat
 from src.core.models import RecordingMetadata
 from src.gui.input_wizard import InputWizard
 from src.gui.recording_overview import RecordingOverview
@@ -294,7 +290,7 @@ class MainWindow(QMainWindow):
         self._status_label.setText("Ready")
         from src.dsp.spectral import SpectralAnalysis
         if isinstance(result, SpectralAnalysis):
-            self._log(f"✓ Analysis complete:")
+            self._log("✓ Analysis complete:")
             self._log(f"  Noise floor: {result.noise_floor_db:.1f} dB")
             self._log(f"  Occupied BW: {result.occupied_bandwidth_hz:,.0f} Hz")
             self._log(f"  Peaks found: {len(result.peaks)}")
@@ -338,9 +334,9 @@ class MainWindow(QMainWindow):
         self._progress_bar.setRange(0, 0)
 
         def _do_load(progress_cb, cancel_check):
-            from src.ingestion.wav_reader import WavReader
             from src.ingestion.raw_iq_reader import RawIQReader
             from src.ingestion.sigmf_reader import SigMFReader
+            from src.ingestion.wav_reader import WavReader
 
             if meta.source_format == FileFormat.WAV:
                 reader = WavReader(path, interpretation=meta.wav_interpretation)

@@ -10,7 +10,6 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QFormLayout,
-    QFrame,
     QGroupBox,
     QLabel,
     QProgressBar,
@@ -21,9 +20,7 @@ from PySide6.QtWidgets import (
 from src.core.models import FileValidationReport, RecordingMetadata
 from src.gui.theme import (
     ACCENT_DANGER,
-    ACCENT_SUCCESS,
     ACCENT_WARNING,
-    TEXT_MUTED,
     TEXT_PRIMARY,
     TEXT_SECONDARY,
 )
@@ -67,12 +64,18 @@ class _InfoRow(QWidget):
         lbl = QLabel(label)
         lbl.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 12px; background: transparent;")
         self._val = QLabel(value)
-        self._val.setStyleSheet(f"color: {TEXT_PRIMARY}; font-size: 13px; font-weight: 500; background: transparent;")
+        self._val.setStyleSheet(
+            f"color: {TEXT_PRIMARY}; font-size: 13px;"
+            f" font-weight: 500; background: transparent;"
+        )
         self._val.setTextInteractionFlags(Qt.TextSelectableByMouse)
         layout.addRow(lbl, self._val)
 
     def set_value(self, text: str, color: str | None = None) -> None:
-        style = f"font-size: 13px; font-weight: 500; background: transparent; color: {color or TEXT_PRIMARY};"
+        style = (
+            f"font-size: 13px; font-weight: 500;"
+            f" background: transparent; color: {color or TEXT_PRIMARY};"
+        )
         self._val.setStyleSheet(style)
         self._val.setText(text)
 

@@ -6,14 +6,11 @@ and system capability summary.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
-    QPushButton,
     QVBoxLayout,
     QWidget,
 )
@@ -21,7 +18,6 @@ from PySide6.QtWidgets import (
 from src.gui.theme import (
     ACCENT_PRIMARY,
     ACCENT_SECONDARY,
-    ACCENT_SUCCESS,
     BG_LIGHT,
     BG_MID,
     TEXT_MUTED,
@@ -72,7 +68,10 @@ class _ActionCard(QFrame):
         layout.addWidget(title_label)
 
         sub_label = QLabel(subtitle)
-        sub_label.setStyleSheet(f"font-size: 12px; color: {TEXT_SECONDARY}; background: transparent;")
+        sub_label.setStyleSheet(
+            f"font-size: 12px; color: {TEXT_SECONDARY};"
+            " background: transparent;"
+        )
         sub_label.setWordWrap(True)
         layout.addWidget(sub_label)
 

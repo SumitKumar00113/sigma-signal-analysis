@@ -1,12 +1,13 @@
 """Unit tests for the SigMF file reader."""
 
-import numpy as np
-import pytest
 from pathlib import Path
 
-from tests.fixtures.generate_fixtures import generate_sigmf_pair
+import numpy as np
+import pytest
+
 from src.core.enums import FileFormat
 from src.ingestion.sigmf_reader import SigMFReader
+from tests.fixtures.generate_fixtures import generate_sigmf_pair
 
 
 @pytest.fixture

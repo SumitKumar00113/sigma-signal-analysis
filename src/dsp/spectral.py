@@ -12,7 +12,6 @@ from dataclasses import dataclass, field
 import numpy as np
 from scipy import signal as sp_signal
 
-
 # ---------------------------------------------------------------------------
 # FFT / PSD
 # ---------------------------------------------------------------------------
@@ -159,7 +158,6 @@ def detect_peaks(
     threshold_db : minimum dB above noise floor to qualify as a peak.
     min_distance_bins : minimum separation between peaks in FFT bins.
     """
-    above_threshold = psd_db > (noise_floor_db + threshold_db)
     peaks: list[SpectralPeak] = []
 
     # Simple local-max search
@@ -210,7 +208,6 @@ def estimate_occupied_bandwidth(
         return 0.0
 
     cumulative = np.cumsum(psd_linear)
-    threshold = fraction * total
 
     lower = 0
     upper = len(cumulative) - 1

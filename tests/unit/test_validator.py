@@ -2,8 +2,8 @@
 
 import numpy as np
 
-from src.ingestion.validator import validate_samples
 from src.core.models import FileValidationReport
+from src.ingestion.validator import validate_samples
 
 
 class TestValidator:
