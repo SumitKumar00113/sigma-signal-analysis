@@ -35,6 +35,6 @@ class TestExceptions:
     def test_raise_and_catch(self):
         with pytest.raises(SigmaError) as exc_info:
             raise FileNotFoundSigmaError("Missing file.iq")
-        
+
         assert "Missing file.iq" in str(exc_info.value)
         assert type(exc_info.value) is FileNotFoundSigmaError

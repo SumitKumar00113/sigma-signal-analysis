@@ -9,18 +9,18 @@ def add_awgn(signal: np.ndarray, snr_db: float) -> np.ndarray:
     """Add Additive White Gaussian Noise to a complex signal."""
     if len(signal) == 0:
         return signal
-        
+
     # Calculate signal power
     sig_power = np.mean(np.abs(signal) ** 2)
-    
+
     # Calculate noise power
     snr_linear = 10.0 ** (snr_db / 10.0)
     noise_power = sig_power / snr_linear
-    
+
     # Generate complex noise
     noise_std = np.sqrt(noise_power / 2.0)
     noise = noise_std * (np.random.randn(len(signal)) + 1j * np.random.randn(len(signal)))
-    
+
     return (signal + noise).astype(np.complex64)
 
 
@@ -44,17 +44,17 @@ def add_iq_imbalance(
     # Convert amplitude imbalance (dB) to linear scale difference
     # Let g_i = 1, then g_q = 10^(-imb/20) for negative imbalance
     amp_ratio = 10.0 ** (amplitude_imbalance_db / 20.0)
-    
+
     # Apply phase imbalance
     theta = np.deg2rad(phase_imbalance_deg)
-    
+
     i = signal.real
     q = signal.imag
-    
+
     # New I remains I
     # New Q is scaled and rotated relative to I
     q_imbal = amp_ratio * (-i * np.sin(theta) + q * np.cos(theta))
-    
+
     return (i + 1j * q_imbal).astype(np.complex64)
 
 

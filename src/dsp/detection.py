@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from src.core.enums import ConfidenceLevel, DetectionMethod
+from src.core.enums import DetectionMethod
 from src.core.models import SignalRegion
 from src.dsp.spectral import compute_psd, detect_peaks, estimate_noise_floor
 
@@ -41,7 +41,7 @@ def detect_signal_regions(
         config = DetectionConfig()
 
     regions: list[SignalRegion] = []
-    
+
     if len(samples) < config.fft_size:
         return regions
 
@@ -49,30 +49,30 @@ def detect_signal_regions(
     freqs, psd_db = compute_psd(
         samples, sample_rate, fft_size=config.fft_size, window="hann"
     )
-    
+
     noise_floor = estimate_noise_floor(psd_db)
-    
+
     # Detect peaks
     peaks = detect_peaks(
         freqs, psd_db, noise_floor_db=noise_floor, threshold_db=config.threshold_db
     )
-    
+
     if not peaks:
         return regions
 
     # Sort peaks by frequency to merge adjacent ones
     peaks.sort(key=lambda p: p.frequency_hz)
-    
+
     # Merge peaks that are close to each other into wider signal regions
     current_start = peaks[0].frequency_hz - (peaks[0].bandwidth_hz / 2)
     current_end = peaks[0].frequency_hz + (peaks[0].bandwidth_hz / 2)
     current_snr = peaks[0].snr_db
-    
+
     for i in range(1, len(peaks)):
         p = peaks[i]
         p_start = p.frequency_hz - (p.bandwidth_hz / 2)
         p_end = p.frequency_hz + (p.bandwidth_hz / 2)
-        
+
         # If overlapping or close enough, merge
         if p_start <= current_end + config.merge_gap_hz:
             current_end = max(current_end, p_end)
@@ -93,7 +93,7 @@ def detect_signal_regions(
                         confidence=0.8 if current_snr > 15 else 0.5
                     )
                 )
-            
+
             current_start = p_start
             current_end = p_end
             current_snr = p.snr_db
