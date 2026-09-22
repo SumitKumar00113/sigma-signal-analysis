@@ -52,6 +52,10 @@ line-length = 100
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "SIM"]
 
+[tool.ruff.lint.per-file-ignores]
+# Coding-theory notation (H, G, L, X) is clearer than lowercase here
+"src/decoding/*" = ["N802", "N803", "N806"]
+
 [tool.mypy]
 python_version = "3.11"
 warn_return_any = true

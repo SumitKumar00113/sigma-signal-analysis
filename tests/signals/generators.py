@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import numpy as np
-from scipy import signal as sp_signal
 
 
 def generate_bpsk(
@@ -21,13 +20,13 @@ def generate_bpsk(
     """
     bits = np.random.randint(0, 2, num_symbols)
     symbols = 2 * bits - 1  # Map to -1, +1
-    
+
     sps = int(sample_rate / symbol_rate)
-    
+
     # Upsample
     upsampled = np.zeros(num_symbols * sps)
     upsampled[::sps] = symbols
-    
+
     # RRC Pulse shaping
     num_taps = 6 * sps + 1
     t = np.arange(num_taps) - (num_taps - 1) // 2
@@ -35,19 +34,19 @@ def generate_bpsk(
     beta = 0.35
     ts = sps
     rc = np.sinc(t / ts) * np.cos(np.pi * beta * t / ts) / (1 - (2 * beta * t / ts)**2 + 1e-10)
-    
+
     sig = np.convolve(upsampled, rc, mode='same').astype(np.complex64)
-    
+
     # Apply frequency offset
     if freq_offset_hz != 0.0:
         t_sec = np.arange(len(sig)) / sample_rate
         mixer = np.exp(1j * 2 * np.pi * freq_offset_hz * t_sec)
         sig = (sig * mixer).astype(np.complex64)
-        
+
     if snr_db is not None:
         from .channels import add_awgn
         sig = add_awgn(sig, snr_db)
-        
+
     return sig, bits
 
 
@@ -61,23 +60,72 @@ def generate_2fsk(
     """Generate a continuous-phase 2-FSK signal."""
     bits = np.random.randint(0, 2, num_symbols)
     symbols = 2 * bits - 1  # Map to -1, +1
-    
+
     sps = int(sample_rate / symbol_rate)
-    
+
     # NRZ shaping (rect pulse)
     upsampled = np.repeat(symbols, sps)
-    
+
     # Integrate to phase (CPFSK)
     h = 2 * deviation_hz / symbol_rate  # modulation index
     phase_diff = upsampled * (np.pi * h / sps)
     phase = np.cumsum(phase_diff)
-    
+
     sig = np.exp(1j * phase).astype(np.complex64)
-    
+
     if snr_db is not None:
         from .channels import add_awgn
         sig = add_awgn(sig, snr_db)
-        
+
+    return sig, bits
+
+
+def _rrc(sps: int, beta: float = 0.35, span: int = 6) -> np.ndarray:
+    num_taps = span * sps + 1
+    t = np.arange(num_taps) - (num_taps - 1) // 2
+    rc = np.sinc(t / sps) * np.cos(np.pi * beta * t / sps) / (1 - (2 * beta * t / sps)**2 + 1e-10)
+    return rc
+
+
+def _gray(n: int) -> int:
+    return n ^ (n >> 1)
+
+
+def generate_qam16(
+    num_symbols: int,
+    symbol_rate: float,
+    sample_rate: float,
+    snr_db: float | None = None,
+    freq_offset_hz: float = 0.0,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Generate a Gray-coded 16-QAM signal (I bits then Q bits per symbol).
+
+    Level mapping per axis: Gray(index) where levels = [-3, -1, 1, 3].
+    Returns (samples, bits).
+    """
+    levels = np.array([-3.0, -1.0, 1.0, 3.0])
+    gray_to_index = {_gray(i): i for i in range(4)}
+    bits = np.random.randint(0, 2, num_symbols * 4)
+    b = bits.reshape(-1, 4)
+    i_code = b[:, 0] * 2 + b[:, 1]
+    q_code = b[:, 2] * 2 + b[:, 3]
+    i_lvl = levels[[gray_to_index[c] for c in i_code]]
+    q_lvl = levels[[gray_to_index[c] for c in q_code]]
+    symbols = (i_lvl + 1j * q_lvl) / np.sqrt(10.0)
+
+    sps = int(sample_rate / symbol_rate)
+    upsampled = np.zeros(num_symbols * sps, dtype=np.complex128)
+    upsampled[::sps] = symbols
+    sig = np.convolve(upsampled, _rrc(sps), mode='same').astype(np.complex64)
+
+    if freq_offset_hz != 0.0:
+        t_sec = np.arange(len(sig)) / sample_rate
+        sig = (sig * np.exp(1j * 2 * np.pi * freq_offset_hz * t_sec)).astype(np.complex64)
+
+    if snr_db is not None:
+        from .channels import add_awgn
+        sig = add_awgn(sig, snr_db)
+
     return sig, bits
 
 
@@ -94,23 +142,23 @@ def generate_qpsk(
     i_syms = 2 * bits[0::2] - 1
     q_syms = 2 * bits[1::2] - 1
     symbols = (i_syms + 1j * q_syms) / np.sqrt(2)
-    
+
     sps = int(sample_rate / symbol_rate)
-    
+
     # Upsample
     upsampled = np.zeros(num_symbols * sps, dtype=np.complex128)
     upsampled[::sps] = symbols
-    
+
     # RRC Pulse shaping
     num_taps = 6 * sps + 1
     t = np.arange(num_taps) - (num_taps - 1) // 2
     beta = 0.35
     rc = np.sinc(t / sps) * np.cos(np.pi * beta * t / sps) / (1 - (2 * beta * t / sps)**2 + 1e-10)
-    
+
     sig = np.convolve(upsampled, rc, mode='same').astype(np.complex64)
-    
+
     if snr_db is not None:
         from .channels import add_awgn
         sig = add_awgn(sig, snr_db)
-        
+
     return sig, bits
