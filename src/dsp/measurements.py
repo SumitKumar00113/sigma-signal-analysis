@@ -170,20 +170,18 @@ def estimate_frequency_offset(
     if np.sum(weights) == 0:
         return float(freqs[int(np.argmax(psd_sum))])
 
-    # Restrict to the contiguous region around the strongest peak so a
-    # second weaker emitter elsewhere in the band does not bias the centroid
-    peak_idx = int(np.argmax(weights))
-    lo = peak_idx
-    while lo > 0 and weights[lo - 1] > 0:
-        lo -= 1
-    hi = peak_idx
-    while hi < fft_size - 1 and weights[hi + 1] > 0:
-        hi += 1
-    # FSK mark/space tones may be separated by a null; widen if the
-    # region is suspiciously narrow relative to the whole occupied set
+    # Split the occupied bins into contiguous segments and keep every
+    # segment carrying a meaningful share of the strongest one.  A lone
+    # emitter gives one segment; FSK mark/space tones give two (or more)
+    # with a null between them, and the carrier sits at their centroid.
     occupied = np.flatnonzero(weights)
-    if (hi - lo + 1) < 0.5 * len(occupied):
-        lo, hi = int(occupied[0]), int(occupied[-1])
+    breaks = np.flatnonzero(np.diff(occupied) > 1)
+    segments = np.split(occupied, breaks + 1)
+    seg_power = np.array([weights[seg].sum() for seg in segments])
+    keep = [seg for seg, pw in zip(segments, seg_power, strict=True)
+            if pw >= 0.3 * seg_power.max()]
+    lo = int(min(seg[0] for seg in keep))
+    hi = int(max(seg[-1] for seg in keep))
 
     w = weights[lo:hi + 1]
     f = freqs[lo:hi + 1]
@@ -242,10 +240,16 @@ def _spectral_lines(
         return []
 
     prom = props["prominences"]
-    # Peak-to-background ratio is the real measure of a "line"
-    ratio = mag[peaks] / np.maximum(background[peaks], 1e-12)
     strength = prom / np.max(prom)
-    conf = np.clip(strength * np.clip((ratio - 1.0) / 4.0, 0.0, 1.0), 0.0, 1.0)
+    # Absolute significance: how many standard deviations of the
+    # background residual the line rises.  Noise alone tops out around
+    # 5–8σ for tens of thousands of bins; a real symbol-rate line is
+    # typically 30σ or more.
+    resid = excess[excess > 0]
+    sigma = float(np.std(resid)) if len(resid) > 10 else 1.0
+    z = excess[peaks] / max(sigma, 1e-12)
+    significance = np.clip((z - 8.0) / 40.0, 0.0, 1.0)
+    conf = np.clip(strength * significance, 0.0, 1.0)
 
     out = [(float(freqs[p]), float(c)) for p, c in zip(peaks, conf, strict=True)]
 

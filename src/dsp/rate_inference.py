@@ -78,6 +78,10 @@ def infer_sample_rate_candidates(
     cps, conf = cands[0][0] / nominal, cands[0][1]
     out.symbol_rate_cycles_per_sample = cps
     out.confidence = conf
+    if conf < 0.2:
+        out.note = ("No confident symbol-rate line found (may be noise, analog, or "
+                    "a very low SNR digital signal); no candidates proposed.")
+        return out
     if cps <= 0 or cps >= 0.5:
         out.note = "Symbol-rate estimate is outside the usable range."
         return out

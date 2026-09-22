@@ -28,8 +28,11 @@ from PySide6.QtWidgets import (
 
 from src.core.enums import FileFormat
 from src.core.models import RecordingMetadata
+from src.dsp.pipeline import AnalysisPipeline, PipelineConfig, PipelineResult
+from src.gui.decoding_panel import DecodingPanel
 from src.gui.input_wizard import InputWizard
 from src.gui.recording_overview import RecordingOverview
+from src.gui.results_panel import ResultsPanel
 from src.gui.viewers.constellation_viewer import ConstellationViewer
 from src.gui.viewers.spectrum_viewer import SpectrumViewer
 from src.gui.viewers.time_viewer import TimeViewer
@@ -43,12 +46,14 @@ class MainWindow(QMainWindow):
 
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("Sigma Signal Analysis — v0.1.0")
+        self.setWindowTitle("Sigma Signal Analysis — v0.2.0")
         self.setMinimumSize(1280, 800)
         self.resize(1600, 960)
 
         self._current_metadata: RecordingMetadata | None = None
         self._current_samples: np.ndarray | None = None
+        self._last_result: PipelineResult | None = None
+        self._analysis_running = False
 
         self._build_menu_bar()
         self._build_toolbar()
@@ -150,6 +155,7 @@ class MainWindow(QMainWindow):
         self._spectrum_viewer = SpectrumViewer()
         self._waterfall_viewer = WaterfallViewer()
         self._constellation_viewer = ConstellationViewer()
+        self._decoding_panel = DecodingPanel()
 
         self.setCentralWidget(self._central_stack)
 
@@ -163,6 +169,7 @@ class MainWindow(QMainWindow):
         self._central_stack.addTab(self._spectrum_viewer, "📊 Spectrum")
         self._central_stack.addTab(self._waterfall_viewer, "🌊 Waterfall")
         self._central_stack.addTab(self._constellation_viewer, "⭐ Constellation")
+        self._central_stack.addTab(self._decoding_panel, "🔣 Bitstream & Decoding")
 
     # ==================================================================
     # Dock widgets
@@ -196,6 +203,16 @@ class MainWindow(QMainWindow):
         self._overview_dock.setWidget(self._overview)
         self.addDockWidget(Qt.RightDockWidgetArea, self._overview_dock)
 
+        # --- Analysis Results (right, tabbed with overview) ---
+        self._results_dock = QDockWidget("Analysis Results", self)
+        self._results_dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
+        self._results = ResultsPanel()
+        self._results.rerun_requested.connect(self._on_run_analysis)
+        self._results_dock.setWidget(self._results)
+        self.addDockWidget(Qt.RightDockWidgetArea, self._results_dock)
+        self.tabifyDockWidget(self._overview_dock, self._results_dock)
+        self._overview_dock.raise_()
+
         # --- Console (bottom) ---
         self._console_dock = QDockWidget("Console", self)
         self._console_dock.setAllowedAreas(Qt.BottomDockWidgetArea | Qt.TopDockWidgetArea)
@@ -215,7 +232,7 @@ class MainWindow(QMainWindow):
         self.setStatusBar(sb)
         self._status_label = QLabel("Ready")
         sb.addWidget(self._status_label)
-        sb.addPermanentWidget(QLabel("Sigma v0.1.0"))
+        sb.addPermanentWidget(QLabel("Sigma v0.2.0"))
 
         self._progress_bar = QProgressBar()
         self._progress_bar.setFixedWidth(200)
@@ -252,56 +269,168 @@ class MainWindow(QMainWindow):
         if self._current_metadata is None:
             QMessageBox.information(self, "Export", "No recording loaded.")
             return
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Export Results", "", "JSON (*.json);;HTML (*.html);;All (*)"
+        path, flt = QFileDialog.getSaveFileName(
+            self, "Export Results", "", "JSON (*.json);;HTML report (*.html);;All (*)"
         )
-        if path:
-            from src.reporting.exporter import export_metadata_json
-            export_metadata_json(self._current_metadata, path)
-            self._log(f"✓ Exported metadata to {path}")
+        if not path:
+            return
+        from src.reporting.exporter import (
+            export_html_report,
+            export_metadata_json,
+            export_pipeline_json,
+        )
+        try:
+            if flt.startswith("HTML") or path.lower().endswith(".html"):
+                export_html_report(self._current_metadata, path=path, pipeline=self._last_result)
+                self._log(f"✓ Exported HTML report to {path}")
+            elif self._last_result is not None:
+                export_pipeline_json(self._last_result, path)
+                self._log(f"✓ Exported analysis + bits (JSON) to {path}")
+            else:
+                export_metadata_json(self._current_metadata, path)
+                self._log(f"✓ Exported metadata to {path} (run analysis to include results)")
+        except Exception as exc:  # noqa: BLE001
+            self._log(f"✗ Export failed: {exc}")
+            QMessageBox.critical(self, "Export", f"Export failed:\n{exc}")
 
     @Slot()
     def _on_run_analysis(self) -> None:
-        if self._current_samples is None:
+        if self._current_samples is None or self._current_metadata is None:
             QMessageBox.information(self, "Analysis", "No recording loaded.")
             return
-        self._log("▶ Running spectral analysis…")
+        if self._analysis_running:
+            self._log("ℹ Analysis already running.")
+            return
+
+        cfg = PipelineConfig(
+            modulation_override=self._results.modulation_override(),
+            symbol_rate_override=self._results.symbol_rate_override(),
+        )
+        ov = []
+        if cfg.modulation_override:
+            ov.append(f"modulation={cfg.modulation_override.value}")
+        if cfg.symbol_rate_override:
+            ov.append(f"symbol rate={cfg.symbol_rate_override:,.0f} baud")
+        suffix = f" (override: {', '.join(ov)})" if ov else ""
+        self._log(f"▶ Running analysis pipeline{suffix}…")
         self._status_label.setText("Analyzing…")
         self._progress_bar.setVisible(True)
-        self._progress_bar.setRange(0, 0)
+        self._progress_bar.setRange(0, 100)
+        self._progress_bar.setValue(0)
+        self._analysis_running = True
+        self._last_result = None
+        self._results.set_busy(True)
 
-        # Run in background worker
         samples = self._current_samples
-        sr = self._current_metadata.sample_rate_hz if self._current_metadata else 1.0
+        meta = self._current_metadata
 
         def _analyze(progress_cb, cancel_check):
-            from src.dsp.spectral import analyze_spectrum
-            result = analyze_spectrum(samples, sr)
-            return result
+            pipeline = AnalysisPipeline(cfg)
+            pipeline.on_progress = progress_cb
+            return pipeline.run(samples, meta)
 
         worker = Worker(_analyze)
+        worker.signals.progress.connect(self._on_analysis_progress)
         worker.signals.finished.connect(self._on_analysis_done)
         worker.signals.error.connect(self._on_analysis_error)
         WorkerPool.instance().start(worker)
 
+    @Slot(float, str)
+    def _on_analysis_progress(self, fraction: float, message: str) -> None:
+        self._progress_bar.setValue(int(fraction * 100))
+        self._status_label.setText(message)
+
     @Slot(object)
     def _on_analysis_done(self, result: object) -> None:
+        self._analysis_running = False
+        self._results.set_busy(False)
         self._progress_bar.setVisible(False)
         self._status_label.setText("Ready")
-        from src.dsp.spectral import SpectralAnalysis
-        if isinstance(result, SpectralAnalysis):
-            self._log("✓ Analysis complete:")
-            self._log(f"  Noise floor: {result.noise_floor_db:.1f} dB")
-            self._log(f"  Occupied BW: {result.occupied_bandwidth_hz:,.0f} Hz")
-            self._log(f"  Peaks found: {len(result.peaks)}")
-            for i, pk in enumerate(result.peaks[:5]):
-                self._log(
-                    f"  Peak {i+1}: {pk.frequency_hz:,.0f} Hz, "
-                    f"{pk.power_db:.1f} dB, SNR {pk.snr_db:.1f} dB"
-                )
+        if not isinstance(result, PipelineResult):
+            return
+        self._last_result = result
+        a = result.analysis
+
+        # Results dock
+        self._results.update_result(result)
+        self._results_dock.raise_()
+
+        # Constellation + bits
+        if result.demod is not None:
+            d = result.demod
+            self._constellation_viewer.set_symbols(
+                d.symbols, f"{d.modulation.value}  ·  EVM {d.evm_percent:.1f}%"
+            )
+            self._decoding_panel.set_bits(
+                d.bits, f"{d.modulation.value} @ {d.symbol_rate_hz:,.0f} baud"
+            )
+        else:
+            self._constellation_viewer.clear()
+            self._decoding_panel.clear()
+
+        # Navigator tree
+        self._populate_tree(result)
+
+        # Console summary
+        self._log("✓ Analysis complete:")
+        self._log(f"  Modulation: {a.modulation.value} ({a.modulation_confidence:.0%}) "
+                  f"— {a.overall_confidence.value}")
+        if a.symbol_rate_hz > 0:
+            self._log(f"  Symbol rate: {a.symbol_rate_hz:,.1f} baud "
+                      f"({a.symbol_rate_confidence:.0%})")
+        self._log(f"  SNR: {result.snr_db:.1f} dB (in-band {result.snr_inband_db:.1f} dB) | "
+                  f"Carrier offset: {result.frequency_offset_hz:+,.0f} Hz | "
+                  f"Occupied BW: {result.occupied_bandwidth_hz:,.0f} Hz")
+        if result.demod is not None:
+            self._log(f"  Demodulated {result.demod.num_symbols:,} symbols → "
+                      f"{result.demod.num_bits:,} bits, EVM {result.demod.evm_percent:.1f}%")
+        for stage, err in result.stage_errors.items():
+            self._log(f"  ⚠ {stage}: {err}")
+        self._log(f"  ({result.processing_time_ms:,.0f} ms)")
+
+    def _populate_tree(self, result: PipelineResult) -> None:
+        """Fill the Regions / Jobs / Results nodes of the project navigator."""
+        regions_item = self._nav_tree.topLevelItem(1)
+        jobs_item = self._nav_tree.topLevelItem(2)
+        results_item = self._nav_tree.topLevelItem(3)
+        for item in (regions_item, results_item):
+            item.takeChildren()
+
+        for i, r in enumerate(result.regions, 1):
+            child = QTreeWidgetItem([
+                f"Region {i}: BW {r.bandwidth_hz / 1e3:,.1f} kHz",
+                f"SNR {r.snr_db:.1f} dB",
+            ])
+            regions_item.addChild(child)
+        regions_item.setExpanded(True)
+
+        a = result.analysis
+        job = QTreeWidgetItem([
+            f"Analysis {jobs_item.childCount() + 1}",
+            f"✓ {result.processing_time_ms:,.0f} ms",
+        ])
+        jobs_item.addChild(job)
+        jobs_item.setExpanded(True)
+
+        results_item.addChild(QTreeWidgetItem(
+            [f"Modulation: {a.modulation.value}", f"{a.modulation_confidence:.0%}"]))
+        if a.symbol_rate_hz > 0:
+            results_item.addChild(QTreeWidgetItem(
+                [f"Symbol rate: {a.symbol_rate_hz:,.0f} baud", f"{a.symbol_rate_confidence:.0%}"]))
+        results_item.addChild(QTreeWidgetItem([f"SNR: {result.snr_db:.1f} dB", ""]))
+        results_item.addChild(QTreeWidgetItem(
+            [f"Carrier offset: {result.frequency_offset_hz:+,.0f} Hz", ""]))
+        if result.demod is not None:
+            results_item.addChild(QTreeWidgetItem(
+                [f"Bits: {result.demod.num_bits:,}", f"EVM {result.demod.evm_percent:.1f}%"]))
+        results_item.addChild(QTreeWidgetItem(
+            ["Overall", a.overall_confidence.value]))
+        results_item.setExpanded(True)
 
     @Slot(str)
     def _on_analysis_error(self, error: str) -> None:
+        self._analysis_running = False
+        self._results.set_busy(False)
         self._progress_bar.setVisible(False)
         self._status_label.setText("Error")
         self._log(f"✗ Analysis error: {error}")
@@ -316,7 +445,7 @@ class MainWindow(QMainWindow):
             self,
             "About Sigma",
             "Sigma Signal Analysis Platform\n"
-            "Version 0.1.0 — Phase 1 MVP\n\n"
+            "Version 0.2.0 — Phase 2\n\n"
             "Automated RF signal analysis, classification,\n"
             "demodulation, and decoding workstation.",
         )
@@ -329,6 +458,10 @@ class MainWindow(QMainWindow):
     def _load_recording(self, path: str, meta: RecordingMetadata) -> None:
         """Load a recording from the wizard result."""
         self._log(f"📂 Loading: {path}")
+        # Drop the previous recording so a stale analysis cannot run on it
+        self._current_samples = None
+        self._current_metadata = None
+        self._last_result = None
         self._status_label.setText("Loading…")
         self._progress_bar.setVisible(True)
         self._progress_bar.setRange(0, 0)
@@ -381,6 +514,10 @@ class MainWindow(QMainWindow):
         meta, samples, report = result
         self._current_metadata = meta
         self._current_samples = samples
+        self._last_result = None
+        self._results.clear()
+        self._constellation_viewer.clear()
+        self._decoding_panel.clear()
 
         self._progress_bar.setVisible(False)
         self._status_label.setText("Ready")
@@ -404,6 +541,7 @@ class MainWindow(QMainWindow):
         self._spectrum_viewer.set_data(samples, sr)
         self._waterfall_viewer.set_data(samples, sr)
         self._time_viewer.enable_region_selection(True)
+        self._overview_dock.raise_()
 
         self._log(f"✓ Loaded {len(samples):,} samples at {sr:,.0f} Hz")
         self._log(f"  Format: {meta.source_format.value} | "

@@ -13,7 +13,7 @@ def generate_bpsk(
     freq_offset_hz: float = 0.0,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Generate a BPSK signal.
-    
+
     Returns
     -------
     (samples, bits)

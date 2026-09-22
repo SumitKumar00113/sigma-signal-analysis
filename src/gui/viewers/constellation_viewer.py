@@ -1,4 +1,4 @@
-"""Constellation diagram viewer (stub for Phase 2).
+"""Constellation diagram viewer.
 
 Displays I/Q scatter plot of demodulated symbols with optional
 colour-coding by time or confidence.
@@ -14,10 +14,10 @@ from src.gui.theme import ACCENT_PRIMARY, BG_DARKEST, TEXT_PRIMARY, TEXT_SECONDA
 
 
 class ConstellationViewer(QWidget):
-    """I/Q constellation scatter plot.
+    """I/Q constellation scatter plot of demodulated symbols.
 
-    This is a minimal stub — full symbol-mapping, grid, and EVM overlay
-    will be added in Phase 2 (Demodulation).
+    For FSK the "symbols" are the sampled instantaneous frequency laid
+    along the real axis, normalised so the outer tones sit at ±1.
     """
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -54,15 +54,25 @@ class ConstellationViewer(QWidget):
 
         layout.addWidget(self._plot_widget)
 
-    def set_symbols(self, symbols: np.ndarray) -> None:
+    def set_symbols(self, symbols: np.ndarray, label: str = "", max_points: int = 20_000) -> None:
         """Plot complex symbols on the constellation.
 
         Parameters
         ----------
-        symbols : 1-D complex64 array of demodulated symbols.
+        symbols : 1-D complex array of demodulated symbols.
+        label : modulation / quality text shown above the plot.
+        max_points : cap on plotted points for responsiveness.
         """
-        self._scatter.setData(symbols.real, symbols.imag)
-        self._status_label.setText(f"{len(symbols):,} symbols")
+        s = np.asarray(symbols)
+        if len(s) > max_points:
+            s = s[np.linspace(0, len(s) - 1, max_points).astype(int)]
+        self._scatter.setData(s.real, s.imag)
+        self._plot_widget.setXRange(-1.6, 1.6)
+        self._plot_widget.setYRange(-1.6, 1.6)
+        text = f"{len(symbols):,} symbols"
+        if label:
+            text = f"{label}  ·  {text}"
+        self._status_label.setText(text)
 
     def clear(self) -> None:
         self._scatter.setData([], [])

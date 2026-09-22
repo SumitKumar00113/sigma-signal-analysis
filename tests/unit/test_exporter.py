@@ -18,7 +18,7 @@ class TestExporter:
         )
         out_path = tmp_path / "meta.json"
         export_metadata_json(meta, out_path)
-        
+
         assert out_path.exists()
         loaded = json.loads(out_path.read_text())
         assert loaded["source_path"] == "/fake/path.iq"
@@ -34,7 +34,7 @@ class TestExporter:
         )
         out_path = tmp_path / "analysis.json"
         export_analysis_json(result, out_path)
-        
+
         assert out_path.exists()
         loaded = json.loads(out_path.read_text())
         assert loaded["modulation"] == "QPSK"
@@ -44,9 +44,9 @@ class TestExporter:
     def test_export_html_report_basic(self, tmp_path: Path):
         meta = RecordingMetadata(source_path="test.wav", sample_rate_hz=48000)
         out_path = tmp_path / "report.html"
-        
+
         export_html_report(meta, path=out_path)
-        
+
         assert out_path.exists()
         html = out_path.read_text()
         assert "Sigma Signal Analysis Report" in html
@@ -61,9 +61,9 @@ class TestExporter:
             warnings=["Low SNR detected"],
         )
         out_path = tmp_path / "report_full.html"
-        
+
         export_html_report(meta, result=result, path=out_path, plot_paths=["plot1.png"])
-        
+
         assert out_path.exists()
         html = out_path.read_text()
         assert "Analysis Results" in html

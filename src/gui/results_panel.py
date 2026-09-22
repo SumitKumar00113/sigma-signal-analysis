@@ -162,7 +162,9 @@ class ResultsPanel(QWidget):
     # ------------------------------------------------------------------
 
     def modulation_override(self) -> ModulationType | None:
-        return self._mod_override.currentData()
+        # Qt hands StrEnum item data back as a plain str
+        v = self._mod_override.currentData()
+        return ModulationType(v) if v else None
 
     def symbol_rate_override(self) -> float | None:
         v = self._rs_override.value()

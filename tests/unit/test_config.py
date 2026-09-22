@@ -4,8 +4,6 @@ import os
 from pathlib import Path
 from unittest import mock
 
-import pytest
-
 from src.core.config import AppConfig
 
 
@@ -29,11 +27,11 @@ class TestAppConfig:
         # We need to mock Path.home() so the dirs are created in tmp_path
         with mock.patch("src.core.config.Path.home", return_value=tmp_path):
             cfg = AppConfig.load()
-            
+
             assert cfg.processing.max_workers == 16
             assert cfg.processing.enable_gpu is True
             assert cfg.display.dark_mode is False
-            
+
             # Verify directories were created
             assert cfg.paths.config_dir.exists()
             assert cfg.paths.log_dir.exists()
