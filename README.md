@@ -4,7 +4,13 @@
 
 **Sigma Signal Analysis** is a powerful desktop software platform for RF signal inspection, classical DSP analysis, and advanced machine learning demodulation/classification. Designed for RF engineers, researchers, and signal analysts, this tool handles robust ingestion and visualization of complex baseband recordings.
 
-> **Status:** Phase 2 complete — automated parameter estimation, modulation classification, demodulation (PSK/QAM/FSK), FEC decoding, de-interleaving, and bit-stream correlation are implemented and wired into the GUI.
+> **Status:** Phase 3. Implemented and wired into the GUI:
+> - automated parameter estimation;
+> - classification of 18 modulation types (rules plus a learned model, hybrid);
+> - demodulation of PSK/QAM/FSK/MSK/GMSK/ASK/OQPSK/π/4-DQPSK, and AM/FM/SSB to audio;
+> - correct handling of real (mono) WAV recordings;
+> - **blind identification of FEC codes and interleavers**;
+> - FEC decoding, de-interleaving and bit-stream correlation.
 
 ## Architecture
 
