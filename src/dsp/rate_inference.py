@@ -15,6 +15,8 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from src.core.exceptions import SigmaError
+from src.dsp.classification import classify_modulation
 from src.dsp.measurements import estimate_symbol_rate_candidates
 
 # Common over-the-air symbol rates (baud)
@@ -75,7 +77,18 @@ def infer_sample_rate_candidates(
         out.note = "No symbol-rate line found; the recording may be analog or noise."
         return out
 
-    cps, conf = cands[0][0] / nominal, cands[0][1]
+    rate, conf = cands[0]
+    # The strongest line is not always the symbol rate (e.g. a QPSK
+    # envelope line at a fraction of it); the classifier checks the
+    # candidates against the constellation, as the pipeline does.
+    try:
+        verified = classify_modulation(samples, nominal, rate, symbol_rate_confidence=conf,
+                                       rate_candidates=cands).symbol_rate_hz
+    except SigmaError:
+        verified = None
+    if verified:
+        rate = verified
+    cps = rate / nominal
     out.symbol_rate_cycles_per_sample = cps
     out.confidence = conf
     if conf < 0.2:
