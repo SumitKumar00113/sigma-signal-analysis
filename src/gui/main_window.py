@@ -10,7 +10,7 @@ from pathlib import Path
 
 import numpy as np
 from PySide6.QtCore import Qt, Slot
-from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtGui import QAction, QActionGroup, QKeySequence
 from PySide6.QtWidgets import (
     QDockWidget,
     QFileDialog,
@@ -54,6 +54,9 @@ class MainWindow(QMainWindow):
         self._current_samples: np.ndarray | None = None
         self._last_result: PipelineResult | None = None
         self._analysis_running = False
+        self._classifier_mode = "hybrid"
+        self._model = None                      # explicitly loaded model (else default)
+        self._training = False
 
         self._build_menu_bar()
         self._build_toolbar()
@@ -116,6 +119,45 @@ class MainWindow(QMainWindow):
         run_action.setShortcut(QKeySequence("Ctrl+R"))
         run_action.triggered.connect(self._on_run_analysis)
         analysis_menu.addAction(run_action)
+        analysis_menu.addSeparator()
+
+        from src.ml.model import ml_available
+
+        has_ml = ml_available()
+        clf_menu = analysis_menu.addMenu("&Classifier")
+        group = QActionGroup(self)
+        group.setExclusive(True)
+        self._classifier_actions: dict[str, QAction] = {}
+        for mode, label, tip in (
+            ("hybrid", "&Hybrid (rules + learned model)",
+             "Rule-based decision, corrected by the learned model where it is much surer"),
+            ("rules", "&Rules only", "Explainable feature/decision-tree classifier"),
+            ("ml", "&Learned model only", "Gradient-boosted classifier trained on data"),
+        ):
+            act = QAction(label, self, checkable=True)
+            act.setToolTip(tip)
+            act.setData(mode)
+            act.setChecked(mode == self._classifier_mode)
+            act.setEnabled(has_ml or mode == "rules")
+            act.triggered.connect(lambda _c=False, m=mode: self._set_classifier_mode(m))
+            group.addAction(act)
+            clf_menu.addAction(act)
+            self._classifier_actions[mode] = act
+        if not has_ml:
+            self._classifier_mode = "rules"
+            self._classifier_actions["rules"].setChecked(True)
+        clf_menu.addSeparator()
+        load_model = QAction("Load Classifier &Model…", self)
+        load_model.triggered.connect(self._on_load_model)
+        load_model.setEnabled(has_ml)
+        clf_menu.addAction(load_model)
+        self._train_action = QAction("&Train Classifier…", self)
+        self._train_action.triggered.connect(self._on_train_classifier)
+        self._train_action.setEnabled(has_ml)
+        clf_menu.addAction(self._train_action)
+        if not has_ml:
+            for a in (load_model, self._train_action):
+                a.setToolTip("Install the ML extras: pip install -e '.[ml]'")
 
         # Help menu
         help_menu = mb.addMenu("&Help")
@@ -270,6 +312,86 @@ class MainWindow(QMainWindow):
         self._log("ℹ Save — not yet implemented")
 
     @Slot()
+    # ---- classifier ------------------------------------------------------
+
+    def _set_classifier_mode(self, mode: str) -> None:
+        self._classifier_mode = mode
+        if mode != "rules" and self._model is None:
+            from src.ml.model import default_model_path
+
+            path = default_model_path()
+            if path is None:
+                self._log("ℹ No learned model found — Analysis → Classifier → Train "
+                          "Classifier… to create one; using rules until then.")
+            else:
+                self._log(f"ℹ Classifier: {mode} (model {path})")
+        else:
+            self._log(f"ℹ Classifier: {mode}")
+
+    def _on_load_model(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, "Load classifier model", "",
+                                              "Sigma model (*.joblib);;All (*)")
+        if not path:
+            return
+        from src.ml.model import ModulationModel
+        try:
+            self._model = ModulationModel.load(path)
+        except Exception as exc:  # noqa: BLE001
+            self._log(f"✗ Could not load model: {exc}")
+            return
+        acc = self._model.info.get("holdout_accuracy")
+        extra = f", held-out accuracy {acc:.1%}" if isinstance(acc, float) else ""
+        self._log(f"✓ Loaded classifier model {path} ({len(self._model.classes)} classes{extra})")
+
+    def _on_train_classifier(self) -> None:
+        if self._training:
+            self._log("ℹ Training already running.")
+            return
+        from src.gui.train_dialog import TrainClassifierDialog
+
+        dlg = TrainClassifierDialog(self)
+        if dlg.exec() != TrainClassifierDialog.Accepted:
+            return
+        opts = dlg.options()
+
+        def _train(progress_cb, cancel_check):
+            from src.ml.train import run_training
+
+            return run_training(opts["per_class"], opts["snr_range"], opts["manifest"],
+                                workers=opts["workers"], progress_cb=progress_cb)
+
+        self._training = True
+        self._train_action.setEnabled(False)
+        self._progress_bar.setVisible(True)
+        self._progress_bar.setRange(0, 100)
+        self._log(f"▶ Training classifier ({opts['per_class']} examples/class"
+                  + (f" + {opts['manifest'].name}" if opts["manifest"] else "") + ")…")
+        worker = Worker(_train)
+        worker.signals.progress.connect(self._on_analysis_progress)
+        worker.signals.finished.connect(self._on_training_done)
+        worker.signals.error.connect(self._on_training_error)
+        WorkerPool.instance().start(worker)
+
+    @Slot(object)
+    def _on_training_done(self, res: object) -> None:
+        self._training = False
+        self._train_action.setEnabled(True)
+        self._progress_bar.setVisible(False)
+        self._status_label.setText("Ready")
+        self._model = getattr(res, "model", None)
+        rec = getattr(res, "recording_accuracy", None)
+        self._log(f"✓ Classifier trained on {res.n_examples:,} examples in {res.seconds:.0f} s: "
+                  f"held-out accuracy {res.holdout_accuracy:.1%}"
+                  + (f", recordings {rec:.1%}" if rec is not None else "")
+                  + f". Saved to {res.path}")
+
+    @Slot(str)
+    def _on_training_error(self, error: str) -> None:
+        self._training = False
+        self._train_action.setEnabled(True)
+        self._progress_bar.setVisible(False)
+        self._log(f"✗ Training failed: {error}")
+
     def _on_save_audio(self) -> None:
         if self._last_result is None:
             return
@@ -326,6 +448,8 @@ class MainWindow(QMainWindow):
         cfg = PipelineConfig(
             modulation_override=self._results.modulation_override(),
             symbol_rate_override=self._results.symbol_rate_override(),
+            classifier_mode=self._classifier_mode,
+            model=self._model,
         )
         ov = []
         if cfg.modulation_override:
@@ -397,7 +521,10 @@ class MainWindow(QMainWindow):
         # Console summary
         self._log("✓ Analysis complete:")
         self._log(f"  Modulation: {a.modulation.value} ({a.modulation_confidence:.0%}) "
-                  f"— {a.overall_confidence.value}")
+                  f"— {a.overall_confidence.value}; decided by {result.classifier_source}")
+        if result.model_prediction is not None and result.classifier_source != "model":
+            p = result.model_prediction
+            self._log(f"  Learned model: {p.modulation.value} ({p.probability:.0%})")
         if a.symbol_rate_hz > 0:
             self._log(f"  Symbol rate: {a.symbol_rate_hz:,.1f} baud "
                       f"({a.symbol_rate_confidence:.0%})")

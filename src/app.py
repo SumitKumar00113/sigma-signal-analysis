@@ -15,6 +15,9 @@ from src.gui.theme import apply_theme
 
 def main() -> None:
     """Launch the Sigma Signal Analysis application."""
+    import multiprocessing
+
+    multiprocessing.freeze_support()     # classifier training uses worker processes
     app = QApplication(sys.argv)
     app.setApplicationName("Sigma Signal Analysis")
     app.setOrganizationName("Sigma")

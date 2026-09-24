@@ -34,6 +34,7 @@ src/
 │   ├── gf2.py             # GF(2) rank / null space on bit-packed rows
 │   └── correlation.py     # Autocorrelation, sync-word search, framing
 ├── gui/            # PySide6 main window, viewers, results dock, decoding workbench
+├── ml/             # Learned classifier: features, training data, model, hybrid, trainer
 └── reporting/      # JSON and HTML export (metadata, analysis, recovered bits)
 ```
 
@@ -87,10 +88,31 @@ src/
 
 3. Install dependencies:
    ```bash
-   # Install with GUI and developer dependencies
-   pip install -e '.[gui,dev]'
+   # Install with GUI, learned classifier and developer dependencies
+   pip install -e '.[gui,ml,dev]'
    ```
-   *(Note: The `[ml]` feature group includes PyTorch and Scikit-Learn for Phase 2.)*
+   *(`[ml]` adds scikit-learn for the learned modulation classifier; without it the rule-based classifier is used.)*
+
+### Training the Learned Classifier
+
+A trained model ships with the application (`src/ml/models/`). To retrain, or to add your own labelled recordings, use either:
+
+- **GUI:** *Analysis → Classifier → Train Classifier…*
+- **Command line:**
+
+```bash
+# synthetic data only (≈ 10 min on 8 cores)
+python -m src.ml.train --per-class 1000 --workers 8
+
+# plus labelled recordings: CSV with path,modulation[,sample_rate,datatype,wav_interpretation]
+python -m src.ml.train --manifest captures/labels.csv --recording-weight 3
+```
+
+The model is saved to `~/.sigma/models/` and used automatically. *Analysis → Classifier* selects one of three modes:
+
+- **Hybrid** (default): explainable rules, corrected by the model where it is much surer.
+- **Rules only.**
+- **Learned model only.**
 
 ### Running the Application
 
@@ -139,6 +161,16 @@ SNR estimates are within 0.3 dB and symbol-rate estimates within 1 Hz of ground 
 
 DBPSK is reported as BPSK: differential encoding is a property of the data, not the signal. It decodes correctly with the DPSK demodulator or differential decoding.
 
+**Learned classifier (hybrid mode, the default).** A gradient-boosted model on 38 rate-normalised features, trained on 18,000 synthetic signals (0–20 dB). Its held-out accuracy is 98.9 %. The table below uses signals generated independently of the training data (same harness as above, 20 per type), with all three classifiers run on the same signals:
+
+| SNR | Rules only | Learned model only | Hybrid |
+|---|---|---|---|
+| 4 dB | 86 % | 99 % | **99 %** |
+| 8 dB | 99 % | 100 % | **100 %** |
+| 15 dB | 100 % | 100 % | **100 %** |
+
+At 4 dB the model fixes the rules' weak cases: 64-QAM 60 → 95 %, 4-ASK 30 → 100 %, GMSK 45 → 100 %, MSK 60 → 100 %. In hybrid mode the rules' explainable evidence is kept, and every override by the model is stated in the result.
+
 ## Limitations & Next Steps
 
 - Region detection is frequency-only; bursty signals are treated as continuous.
@@ -146,7 +178,8 @@ DBPSK is reported as BPSK: differential encoding is a property of the data, not 
 - Interleaver identification needs a convolutional code inside the interleaver. Punctured codes whose parity checks are longer than the interleaver runs are only found when the code is selected under FEC first. Diagonal interleavers need columns longer than the code's check span. Pseudo-random identification searches seeds 0…N−1 for the block sizes you give it.
 - Reed-Solomon identification assumes GF(2⁸), generator α (fcr 0 or 1), ≥ 6 parity symbols and no CCSDS dual-basis mapping. Rank-based block-code detection needs a near error-free stream.
 - The absolute sample rate of a headerless file cannot be recovered; only consistent candidates are offered.
-- Modulation classification is a rule-based feature classifier: accuracy drops for 64-QAM and 4-ASK below ≈ 6 dB, and modulations outside the 18 types (OFDM, APSK, CPM variants, DSB-SC) are reported as unknown.
+- Modulations outside the 18 types (OFDM, APSK, CPM variants, DSB-SC) are reported as unknown. The learned model has only seen synthetic signals unless you retrain it with labelled recordings. With rules only, accuracy drops for 64-QAM and 4-ASK below ≈ 6 dB.
+- At very low SNR the classification can be right while demodulation fails: 4-ASK at 4 dB is often sliced as 2 levels, and the symbol rate of weak GMSK/FSK may not be recoverable. Enter the symbol rate manually in that case.
 - The SSB carrier is suppressed, so it is inferred as 300 Hz beyond the band edge. A tuning error shifts the pitch of the recovered audio but it stays intelligible.
 - OQPSK and M-PSK/QAM decisions carry the usual carrier-phase ambiguities (reported as warnings); OQPSK also has a one-symbol I/Q pairing ambiguity.
 - Future: deep-learning classifier for low-SNR / exotic modulations, burst segmentation, batch CLI.

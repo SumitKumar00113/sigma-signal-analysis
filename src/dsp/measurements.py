@@ -516,8 +516,12 @@ def estimate_symbol_rate_candidates(
         for r_e, c_e in a[:3]:
             for r_i, c_i in b[:3]:
                 if abs(r_e - r_i) / max(r_e, 1.0) < 0.01:
-                    key = next(k for k in merged if abs(k - r_e) / max(k, 1.0) < 0.01)
-                    merged[key] = min(1.0, merged[key] + 0.5 * min(c_e, c_i))
+                    # The merge keeps the stronger detection's rate, which may
+                    # have drifted just outside 1 % of r_e: look near either
+                    key = next((k for k in merged
+                                if min(abs(k - r_e), abs(k - r_i)) / max(k, 1.0) < 0.01), None)
+                    if key is not None:
+                        merged[key] = min(1.0, merged[key] + 0.5 * min(c_e, c_i))
 
     out = sorted(merged.items(), key=lambda kv: kv[1], reverse=True)
     return [(float(r), float(c)) for r, c in out[:5]]
