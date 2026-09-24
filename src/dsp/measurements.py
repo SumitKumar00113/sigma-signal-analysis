@@ -282,7 +282,9 @@ def estimate_symbol_rate_envelope(
     """
     if len(samples) < 1024:
         return []
-    return _spectral_lines(np.abs(samples) ** 2, sample_rate)
+    # Out-of-band noise beats against the signal (and against the carrier
+    # of ASK/AM) in |x|²; confine it to the occupied band first
+    return _spectral_lines(np.abs(bandlimit_to_signal(samples, sample_rate)) ** 2, sample_rate)
 
 
 def estimate_symbol_rate_instfreq(
@@ -303,6 +305,134 @@ def estimate_symbol_rate_instfreq(
     inst_freq = compute_instantaneous_frequency(filtered, sample_rate)
     feature = np.abs(np.diff(inst_freq))
     return _spectral_lines(feature, sample_rate)
+
+
+def estimate_symbol_rate_transitions(
+    samples: np.ndarray,
+    sample_rate: float,
+) -> list[tuple[float, float]]:
+    """Symbol rate candidates from envelope *transitions*, ``(d|x|/dt)²``.
+
+    For carrier-bearing amplitude keying (OOK/ASK) the envelope is the data
+    itself, whose strong baseband spectrum buries the symbol-rate line of
+    ``|x|²``.  Differentiating suppresses that hump while the transitions
+    at symbol boundaries keep their periodicity.
+    """
+    if len(samples) < 1024:
+        return []
+    env = np.abs(bandlimit_to_signal(samples, sample_rate))
+    return _spectral_lines(np.diff(env) ** 2, sample_rate)
+
+
+def mpower_carrier(
+    samples: np.ndarray,
+    sample_rate: float,
+    order: int = 4,
+) -> tuple[float, float, float]:
+    """Carrier line of ``x^order`` (M-PSK / OQPSK carrier recovery).
+
+    Returns ``(carrier_hz, carrier_phase_rad, line_ratio)`` where the ratio
+    compares the peak with its local spectral neighbourhood; the phase is
+    ambiguous by multiples of 2π/order.  A ratio well above ~30 means the
+    line is real.
+    """
+    x = np.asarray(samples, dtype=np.complex128)
+    n = len(x)
+    if n < 256:
+        return 0.0, 0.0, 0.0
+    spec = np.fft.fft(x ** order * np.hanning(n))
+    mag = np.abs(spec)
+    k = int(np.argmax(mag))
+    # Parabolic interpolation of the peak for a sub-bin frequency
+    a, b, c = mag[k - 1], mag[k], mag[(k + 1) % n]
+    delta = 0.5 * (a - c) / (a - 2 * b + c) if (a - 2 * b + c) != 0 else 0.0
+    f_line = (np.fft.fftfreq(n, 1.0 / sample_rate)[k] + delta * sample_rate / n)
+    t = np.arange(n) / sample_rate
+    phase = float(np.angle(np.sum(x ** order * np.exp(-2j * np.pi * f_line * t))))
+    # A spectral *line* must stand out from its own neighbourhood, not
+    # just from the (noise-dominated) median of the whole band
+    w = max(8, min(n // 50, 400))
+    idx = np.arange(k - w, k + w + 1) % n
+    neighbours = mag[idx[np.abs(np.arange(-w, w + 1)) > 3]]
+    ratio = float(b / (np.median(neighbours) + 1e-300))
+    return float(f_line / order), phase / order, ratio
+
+
+def mpower_line_pair(
+    samples: np.ndarray,
+    sample_rate: float,
+    spacing_hz: float,
+    order: int = 4,
+) -> tuple[float, float, float]:
+    """Look for two equal ``x^order`` lines *spacing_hz* apart.
+
+    π/4-DQPSK alternates between two QPSK grids 45° apart, so its 4th
+    power flips sign every symbol: instead of one line at 4·f₀ it shows a
+    pair at 4·f₀ ± Rs/2 (spacing Rs).  Returns ``(carrier_hz,
+    partner_strength, line_ratio)`` where the carrier is the pair's
+    midpoint / *order* and the strength is partner/peak magnitude.
+
+    QPSK's 4th power also has (weaker) lines Rs either side of its main
+    line, but *symmetrically*; a π/4-DQPSK peak has one equal partner and a
+    much weaker line on the other side.  The strength returned is therefore
+    0 unless the stronger side is at least 1.5× the weaker one.
+    """
+    x = np.asarray(samples, dtype=np.complex128)
+    n = len(x)
+    if n < 256 or spacing_hz <= 0:
+        return 0.0, 0.0, 0.0
+    mag = np.abs(np.fft.fft(x ** order * np.hanning(n)))
+    freqs = np.fft.fftfreq(n, 1.0 / sample_rate)
+    k = int(np.argmax(mag))
+    w = max(8, min(n // 50, 400))
+    idx = np.arange(k - w, k + w + 1) % n
+    ratio = float(mag[k] / (np.median(mag[idx[np.abs(np.arange(-w, w + 1)) > 3]]) + 1e-300))
+    step = spacing_hz * n / sample_rate
+    sides = []
+    for sign in (1, -1):
+        centre = int(round(k + sign * step)) % n
+        near = np.arange(centre - 2, centre + 3) % n
+        j = near[int(np.argmax(mag[near]))]
+        sides.append((float(mag[j] / mag[k]), float(freqs[j])))
+    sides.sort(reverse=True)
+    (strong, f_partner), (weak, _) = sides
+    carrier = (freqs[k] + f_partner) / 2.0 / order
+    strength = strong if strong >= 1.5 * weak else 0.0
+    return float(carrier), strength, ratio
+
+
+def estimate_symbol_rate_quadrature(
+    samples: np.ndarray,
+    sample_rate: float,
+    min_line_ratio: float = 30.0,
+) -> list[tuple[float, float]]:
+    """Symbol rate of QPSK-family signals from a single rail.
+
+    OQPSK's envelope barely varies, so |x|² shows almost no symbol-rate
+    line.  After carrier recovery from the 4th-power line, the real part
+    of the de-rotated signal is one rail (I or Q) – a plain PAM signal
+    whose square has a strong line at the symbol rate.
+    """
+    if len(samples) < 1024:
+        return []
+    band = bandlimit_to_signal(samples, sample_rate)
+    # A plain carrier line (ASK, AM) also shows up in x⁴; not this case
+    if mpower_carrier(band, sample_rate, 1)[2] >= min_line_ratio:
+        return []
+    # MSK/GMSK are OQPSK-like with two-symbol pulses per rail, so their
+    # rails would report half the symbol rate; they have a flat envelope
+    env = np.abs(band)
+    if np.std(env) < 0.18 * np.mean(env):
+        return []
+    fc, phase, ratio = mpower_carrier(band, sample_rate, 4)
+    if ratio < min_line_ratio:
+        return []
+    # QPSK points sit at ±45° (x⁴ ≈ −1): rotate them there, which puts
+    # the I and Q rails on the real and imaginary axes
+    phase -= np.pi / 4
+    t = np.arange(len(band)) / sample_rate
+    rail = np.real(band * np.exp(-1j * (2 * np.pi * fc * t + phase)))
+    return _spectral_lines(rail ** 2, sample_rate)
 
 
 def bandlimit_to_signal(
@@ -339,9 +469,9 @@ def estimate_symbol_rate_candidates(
     Parameters
     ----------
     method:
-        ``"envelope"`` (PSK/QAM), ``"instfreq"`` (FSK), or ``"auto"`` which
-        runs both and merges the candidate lists, preferring whichever
-        produced the cleaner line.
+        ``"envelope"`` (PSK/QAM), ``"instfreq"`` (FSK), ``"transitions"``
+        (ASK/OOK), or ``"auto"`` which runs all three and merges the
+        candidate lists, preferring whichever produced the cleaner line.
 
     Returns a list of ``(rate_hz, confidence)`` tuples, best first.
     """
@@ -352,30 +482,42 @@ def estimate_symbol_rate_candidates(
         return estimate_symbol_rate_envelope(samples, sample_rate)[:5]
     if method == "instfreq":
         return estimate_symbol_rate_instfreq(samples, sample_rate)[:5]
+    if method == "transitions":
+        return estimate_symbol_rate_transitions(samples, sample_rate)[:5]
 
     env = estimate_symbol_rate_envelope(samples, sample_rate)
     ifr = estimate_symbol_rate_instfreq(samples, sample_rate)
+    trn = estimate_symbol_rate_transitions(samples, sample_rate)
+    quad = estimate_symbol_rate_quadrature(samples, sample_rate)
 
     merged: dict[float, float] = {}
 
     def _add(cands: list[tuple[float, float]], weight: float) -> None:
         for rate, conf in cands:
-            # Merge candidates within 1 % of each other
-            key = next((k for k in merged if abs(k - rate) / max(k, 1.0) < 0.01), rate)
-            merged[key] = max(merged.get(key, 0.0), conf * weight)
-            if key in merged and key != rate and merged[key] == conf * weight:
-                # Keep the more precise frequency of the two
-                pass
+            # Merge candidates within 1 % of each other, keeping the rate
+            # reported by the stronger (hence more precise) detection
+            key = next((k for k in merged if abs(k - rate) / max(k, 1.0) < 0.01), None)
+            if key is None:
+                merged[rate] = conf * weight
+            elif conf * weight > merged[key]:
+                del merged[key]
+                merged[rate] = conf * weight
 
     _add(env, 1.0)
     _add(ifr, 1.0)
+    _add(trn, 1.0)
+    # When it fires at all (4th-power carrier line, no plain carrier) the
+    # single-rail estimate is the most direct one for the QPSK family, and
+    # the only one that sees OQPSK
+    _add(quad, 2.0)
 
-    # Agreement between the two methods is strong evidence
-    for r_e, c_e in env[:3]:
-        for r_i, c_i in ifr[:3]:
-            if abs(r_e - r_i) / max(r_e, 1.0) < 0.01:
-                key = next(k for k in merged if abs(k - r_e) / max(k, 1.0) < 0.01)
-                merged[key] = min(1.0, merged[key] + 0.5 * min(c_e, c_i))
+    # Agreement between methods is strong evidence
+    for a, b in ((env, ifr), (env, trn), (ifr, trn), (env, quad), (trn, quad)):
+        for r_e, c_e in a[:3]:
+            for r_i, c_i in b[:3]:
+                if abs(r_e - r_i) / max(r_e, 1.0) < 0.01:
+                    key = next(k for k in merged if abs(k - r_e) / max(k, 1.0) < 0.01)
+                    merged[key] = min(1.0, merged[key] + 0.5 * min(c_e, c_i))
 
     out = sorted(merged.items(), key=lambda kv: kv[1], reverse=True)
     return [(float(r), float(c)) for r, c in out[:5]]

@@ -86,6 +86,11 @@ class MainWindow(QMainWindow):
         export_action.triggered.connect(self._on_export)
         file_menu.addAction(export_action)
 
+        self._save_audio_action = QAction("Save Demodulated &Audio…", self)
+        self._save_audio_action.triggered.connect(self._on_save_audio)
+        self._save_audio_action.setEnabled(False)
+        file_menu.addAction(self._save_audio_action)
+
         file_menu.addSeparator()
 
         quit_action = QAction("&Quit", self)
@@ -265,6 +270,22 @@ class MainWindow(QMainWindow):
         self._log("ℹ Save — not yet implemented")
 
     @Slot()
+    def _on_save_audio(self) -> None:
+        if self._last_result is None:
+            return
+        path, _ = QFileDialog.getSaveFileName(self, "Save Demodulated Audio", "",
+                                              "WAV audio (*.wav)")
+        if not path:
+            return
+        if not path.lower().endswith(".wav"):
+            path += ".wav"
+        from src.reporting.exporter import export_audio_wav
+        try:
+            seconds = export_audio_wav(self._last_result, path)
+            self._log(f"✓ Saved {seconds:.1f} s of demodulated audio to {path}")
+        except Exception as exc:  # noqa: BLE001
+            self._log(f"✗ Audio export failed: {exc}")
+
     def _on_export(self) -> None:
         if self._current_metadata is None:
             QMessageBox.information(self, "Export", "No recording loaded.")
@@ -355,8 +376,10 @@ class MainWindow(QMainWindow):
         self._results.update_result(result)
         self._results_dock.raise_()
 
-        # Constellation + bits
-        if result.demod is not None:
+        # Constellation + bits (digital) or audio (analog)
+        has_audio = result.demod is not None and result.demod.audio is not None
+        self._save_audio_action.setEnabled(has_audio)
+        if result.demod is not None and not has_audio:
             d = result.demod
             self._constellation_viewer.set_symbols(
                 d.symbols, f"{d.modulation.value}  ·  EVM {d.evm_percent:.1f}%"
@@ -381,7 +404,12 @@ class MainWindow(QMainWindow):
         self._log(f"  SNR: {result.snr_db:.1f} dB (in-band {result.snr_inband_db:.1f} dB) | "
                   f"Carrier offset: {result.frequency_offset_hz:+,.0f} Hz | "
                   f"Occupied BW: {result.occupied_bandwidth_hz:,.0f} Hz")
-        if result.demod is not None:
+        if has_audio:
+            d = result.demod
+            self._log(f"  Demodulated {d.modulation.value} to "
+                      f"{len(d.audio) / d.audio_rate_hz:.1f} s of audio — "
+                      "File → Save Demodulated Audio… to listen")
+        elif result.demod is not None:
             self._log(f"  Demodulated {result.demod.num_symbols:,} symbols → "
                       f"{result.demod.num_bits:,} bits, EVM {result.demod.evm_percent:.1f}%")
         for stage, err in result.stage_errors.items():
@@ -420,9 +448,13 @@ class MainWindow(QMainWindow):
         results_item.addChild(QTreeWidgetItem([f"SNR: {result.snr_db:.1f} dB", ""]))
         results_item.addChild(QTreeWidgetItem(
             [f"Carrier offset: {result.frequency_offset_hz:+,.0f} Hz", ""]))
-        if result.demod is not None:
+        d = result.demod
+        if d is not None and d.audio is not None and d.audio_rate_hz > 0:
             results_item.addChild(QTreeWidgetItem(
-                [f"Bits: {result.demod.num_bits:,}", f"EVM {result.demod.evm_percent:.1f}%"]))
+                [f"Audio: {len(d.audio) / d.audio_rate_hz:.1f} s", f"{d.audio_rate_hz:,.0f} Hz"]))
+        elif d is not None:
+            results_item.addChild(QTreeWidgetItem(
+                [f"Bits: {d.num_bits:,}", f"EVM {d.evm_percent:.1f}%"]))
         results_item.addChild(QTreeWidgetItem(
             ["Overall", a.overall_confidence.value]))
         results_item.setExpanded(True)

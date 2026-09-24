@@ -112,7 +112,8 @@ class ResultsPanel(QWidget):
         # --- Demodulation ---
         demod_group = QGroupBox("Demodulation")
         dg = QVBoxLayout(demod_group)
-        for key in ("Symbols", "Bits", "EVM", "Residual CFO", "FSK Tones", "Processing Time"):
+        for key in ("Symbols", "Bits", "EVM", "Residual CFO", "FSK Tones", "Audio",
+                    "Processing Time"):
             row = _InfoRow(key)
             self._rows[key] = row
             dg.addWidget(row)
@@ -233,8 +234,16 @@ class ResultsPanel(QWidget):
                 ", ".join(f"{t:+,.0f}" for t in d.fsk_levels_hz) + " Hz"
                 if d.fsk_levels_hz else "—"
             )
+            if d.audio is not None and d.audio_rate_hz > 0:
+                for k in ("Symbols", "Bits", "EVM", "Residual CFO"):
+                    self._rows[k].set_value("—")
+                self._rows["Audio"].set_value(
+                    f"{len(d.audio) / d.audio_rate_hz:.1f} s @ {d.audio_rate_hz:,.0f} Hz "
+                    "(File → Save Demodulated Audio…)", ACCENT_SUCCESS)
+            else:
+                self._rows["Audio"].set_value("—")
         else:
-            for k in ("Symbols", "Bits", "EVM", "Residual CFO", "FSK Tones"):
+            for k in ("Symbols", "Bits", "EVM", "Residual CFO", "FSK Tones", "Audio"):
                 self._rows[k].set_value("—")
         self._rows["Processing Time"].set_value(f"{res.processing_time_ms:,.0f} ms")
 

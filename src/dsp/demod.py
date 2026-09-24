@@ -65,6 +65,9 @@ class DemodResult:
     carrier_lock: float = 0.0               # mean |phase error| tail; lower = better
     fsk_levels_hz: list[float] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    audio: np.ndarray | None = None         # analog modulations: recovered message
+    audio_rate_hz: float = 0.0
+    carrier_hz: float | None = None         # e.g. the suppressed SSB carrier used
 
     @property
     def num_symbols(self) -> int:
@@ -89,7 +92,18 @@ _MOD_ORDER: dict[ModulationType, int] = {
     ModulationType.QAM256: 256,
     ModulationType.FSK2: 2,
     ModulationType.FSK4: 4,
+    ModulationType.MSK: 2,
+    ModulationType.GMSK: 2,
+    ModulationType.GFSK: 2,
+    ModulationType.OQPSK: 4,
+    ModulationType.DPSK: 2,
+    ModulationType.PI4_DQPSK: 4,
+    ModulationType.OOK: 2,
 }
+
+#: Modulations whose output is audio rather than bits
+ANALOG_MODULATIONS = frozenset({ModulationType.AM, ModulationType.FM,
+                                ModulationType.SSB_USB, ModulationType.SSB_LSB})
 
 
 def modulation_order(mod: ModulationType) -> int:
@@ -315,17 +329,26 @@ def _kmeans_1d(values: np.ndarray, k: int, iters: int = 30) -> np.ndarray:
     return np.sort(centroids)
 
 
-def demodulate_fsk(
+@dataclass
+class FSKFrontEnd:
+    """Symbol-centre instantaneous frequencies of a CPFSK-like signal."""
+
+    freq_symbols_hz: np.ndarray       # relative to the coarse carrier
+    samples_per_symbol: float
+    coarse_cfo_hz: float
+    timing_lock: float
+
+
+def fsk_front_end(
     samples: np.ndarray,
     sample_rate: float,
     symbol_rate: float,
-    order: int = 2,
     coarse_cfo_hz: float | None = None,
     target_sps: int = 8,
-) -> DemodResult:
-    """Demodulate M-FSK (order 2 or 4) with a frequency discriminator."""
-    if order not in (2, 4):
-        raise DemodulationError(f"Unsupported FSK order {order}.")
+) -> FSKFrontEnd:
+    """Mix to DC → band-limit → resample → discriminate → integrate over a
+    symbol → Gardner timing; shared by the FSK/MSK/GMSK demodulators and
+    the classifier."""
     if symbol_rate <= 0:
         raise DemodulationError("Symbol rate must be positive.")
     if len(samples) < 64 * (sample_rate / symbol_rate):
@@ -358,10 +381,29 @@ def demodulate_fsk(
     settle = min(len(freq_syms) // 10, 200)
     freq_syms = freq_syms[settle:]
 
-    # Rescale: Gardner normalised power, so recover Hz by comparing to the
+    # Gardner normalised power, so recover Hz by comparing to the
     # discriminator output's RMS
     scale = np.sqrt(np.mean(integrated**2)) if np.any(integrated) else 1.0
-    freq_syms_hz = freq_syms * scale
+    tail = timing.timing_error[len(timing.timing_error) * 3 // 4:]
+    t_lock = float(np.mean(np.abs(tail))) if len(tail) else 0.0
+    return FSKFrontEnd(freq_syms * scale, sps, float(coarse_cfo_hz), t_lock)
+
+
+def demodulate_fsk(
+    samples: np.ndarray,
+    sample_rate: float,
+    symbol_rate: float,
+    order: int = 2,
+    coarse_cfo_hz: float | None = None,
+    target_sps: int = 8,
+    modulation: ModulationType | None = None,
+) -> DemodResult:
+    """Demodulate M-FSK (order 2 or 4) – or MSK/GMSK, which are 2-level
+    CPFSK – with a frequency discriminator."""
+    if order not in (2, 4):
+        raise DemodulationError(f"Unsupported FSK order {order}.")
+    fe = fsk_front_end(samples, sample_rate, symbol_rate, coarse_cfo_hz, target_sps)
+    freq_syms_hz, sps, coarse_cfo_hz = fe.freq_symbols_hz, fe.samples_per_symbol, fe.coarse_cfo_hz
 
     centroids = _kmeans_1d(freq_syms_hz, order)
     thresholds = (centroids[:-1] + centroids[1:]) / 2.0
@@ -380,10 +422,9 @@ def demodulate_fsk(
     ref = centroids[level_idx]
     evm = float(100.0 * np.sqrt(np.mean((freq_syms_hz - ref) ** 2)) / deviation)
 
-    tail = timing.timing_error[len(timing.timing_error) * 3 // 4:]
-    t_lock = float(np.mean(np.abs(tail))) if len(tail) else 0.0
+    t_lock = fe.timing_lock
 
-    mod = ModulationType.FSK2 if order == 2 else ModulationType.FSK4
+    mod = modulation or (ModulationType.FSK2 if order == 2 else ModulationType.FSK4)
     return DemodResult(
         modulation=mod,
         symbols=symbols,
@@ -402,6 +443,272 @@ def demodulate_fsk(
 
 
 # ---------------------------------------------------------------------------
+# Amplitude-shift keying (OOK / ASK)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class LevelFit:
+    """Result of fitting discrete levels to symbol-centre values."""
+
+    order: int                   # 1 (no structure), 2 or 4
+    centroids: np.ndarray
+    separation: float            # 2-level: centroid gap / within-cluster std
+    variance_ratio: float        # within-cluster variance, 4 vs 2 levels
+    even_spacing: bool           # 4-level centroids roughly evenly spaced
+
+
+def fit_levels(values: np.ndarray, four_level_ratio: float = 0.27) -> LevelFit:
+    """Decide whether *values* sit on 2 or 4 discrete levels.
+
+    Thresholds were set on synthetic OOK/ASK/FSK (≥ 6 dB SNR) against
+    analog AM/FM, whose symbol-centre values are continuous: a continuous
+    (Gaussian-like) distribution gives a 2-level separation of ≈ 2.4 and a
+    4/2 variance ratio of ≈ 0.33.  *four_level_ratio* is the variance
+    ratio below which 4 levels are accepted (4-ASK at 6 dB ≈ 0.22; 4-FSK
+    ≈ 0.01, while GMSK's ISI fakes ≈ 0.2, hence a stricter value there).
+    """
+    v = np.asarray(values, dtype=np.float64)
+    if len(v) < 32:
+        return LevelFit(1, np.array([np.mean(v) if len(v) else 0.0]), 0.0, 1.0, False)
+
+    def within(c: np.ndarray) -> float:
+        a = np.argmin(np.abs(v[:, None] - c[None, :]), axis=1)
+        return float(np.mean((v - c[a]) ** 2))
+
+    c2 = _kmeans_1d(v, 2)
+    c4 = _kmeans_1d(v, 4)
+    w2, w4 = within(c2), within(c4)
+    sep = float((c2[1] - c2[0]) / np.sqrt(max(w2, 1e-30)))
+    ratio = w4 / max(w2, 1e-30)
+    gaps = np.diff(c4)
+    even = bool(np.max(gaps) > 0 and np.min(gaps) > 0.6 * np.max(gaps))
+    if ratio < four_level_ratio and even:
+        return LevelFit(4, c4, sep, ratio, even)
+    if sep >= 5.0:
+        return LevelFit(2, c2, sep, ratio, even)
+    return LevelFit(1, c2, sep, ratio, even)
+
+
+def envelope_symbols(
+    samples: np.ndarray,
+    sample_rate: float,
+    symbol_rate: float,
+    coarse_cfo_hz: float | None = None,
+    target_sps: int = 8,
+) -> tuple[np.ndarray, float, float, float]:
+    """Envelope at the symbol centres: mix to DC → band-limit → resample →
+    |x| → Gardner timing.  Returns ``(values, sps, coarse_cfo_hz, timing_lock)``."""
+    if symbol_rate <= 0:
+        raise DemodulationError("Symbol rate must be positive.")
+    if len(samples) < 64 * (sample_rate / symbol_rate):
+        raise InsufficientSamplesError("Need at least 64 symbols worth of samples.")
+    if coarse_cfo_hz is None:
+        coarse_cfo_hz = estimate_frequency_offset(samples, sample_rate)
+    x = translate_frequency(samples, sample_rate, -coarse_cfo_hz)
+    x = bandlimit_to_signal(x, sample_rate)
+    x, sps = resample_to_sps(x, sample_rate, symbol_rate, target_sps=target_sps)
+    env = np.abs(x).astype(np.float64)
+    mean = float(np.mean(env))
+    ac = env - mean
+    timing = gardner_timing_recovery(ac.astype(np.complex128), sps)
+    if len(timing.symbols) < 16:
+        raise DemodulationError("Timing recovery produced too few symbols.")
+    v = np.real(timing.symbols)
+    # Gardner normalises power; restore the envelope scale and its mean
+    v = v * np.sqrt(np.mean(ac ** 2)) / (np.sqrt(np.mean(v ** 2)) + 1e-12) + mean
+    v = v[min(len(v) // 10, 200):]
+    tail = timing.timing_error[len(timing.timing_error) * 3 // 4:]
+    t_lock = float(np.mean(np.abs(tail))) if len(tail) else 0.0
+    return v, sps, float(coarse_cfo_hz), t_lock
+
+
+def demodulate_ask(
+    samples: np.ndarray,
+    sample_rate: float,
+    symbol_rate: float,
+    order: int | None = None,
+    coarse_cfo_hz: float | None = None,
+    target_sps: int = 8,
+) -> DemodResult:
+    """Demodulate unipolar ASK / OOK with an envelope detector.
+
+    *order* (2 or 4) is detected from the envelope levels when omitted.
+    Levels map to Gray codes in ascending amplitude, so for OOK
+    "carrier off" → 0 and "carrier on" → 1.
+    """
+    v, sps, cfo, t_lock = envelope_symbols(samples, sample_rate, symbol_rate, coarse_cfo_hz,
+                                           target_sps)
+    fit = fit_levels(v)
+    if order is None:
+        order = fit.order if fit.order in (2, 4) else 2
+    if order not in (2, 4):
+        raise DemodulationError(f"Unsupported ASK order {order}.")
+    centroids = _kmeans_1d(v, order)
+    idx = np.searchsorted((centroids[:-1] + centroids[1:]) / 2.0, v)
+    k_bits = int(np.log2(order))
+    gray = np.array([_gray_encode(i) for i in range(order)])
+    bits = _int_to_bits(gray[idx], k_bits)
+
+    peak = float(centroids[-1]) or 1.0
+    symbols = (v / peak).astype(np.complex64)
+    evm = float(100.0 * np.sqrt(np.mean((v - centroids[idx]) ** 2)) / peak)
+    ook = order == 2 and centroids[0] < 0.25 * centroids[-1]
+    return DemodResult(
+        modulation=ModulationType.OOK if ook else ModulationType.ASK,
+        symbols=symbols, bits=bits, symbol_rate_hz=symbol_rate, samples_per_symbol=sps,
+        bits_per_symbol=k_bits, evm_percent=evm, coarse_cfo_hz=cfo, timing_lock=t_lock,
+        warnings=[f"{order}-level amplitude keying, levels "
+                  + ", ".join(f"{c / peak:.2f}" for c in centroids) + " (relative)."],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Offset QPSK
+# ---------------------------------------------------------------------------
+
+
+def _feedforward_phase(y: np.ndarray, order: int, window: int = 64,
+                       offset: float = np.pi) -> np.ndarray:
+    """Viterbi-Viterbi phase: de-rotate *y* using a sliding average of
+    ``y^order`` (whose ideal angle is *offset*).  Tracks slow drift."""
+    z = y ** order
+    avg = np.convolve(z, np.ones(window) / window, mode="same")
+    theta = np.unwrap(np.angle(avg) - offset) / order
+    return y * np.exp(-1j * theta)
+
+
+def oqpsk_rails(
+    samples: np.ndarray,
+    sample_rate: float,
+    symbol_rate: float,
+    target_sps: int = 8,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, float, float, float]:
+    """Carrier-recovered OQPSK-style rails.
+
+    Returns ``(offset_symbols, aligned_symbols, strobes, sps, carrier_hz,
+    timing_lock)``: I at its symbol centres paired with Q half a symbol
+    later (OQPSK) or at the same instant (QPSK) – whichever pairing gives
+    a clean QPSK constellation reveals the modulation.
+    """
+    from src.dsp.measurements import mpower_carrier
+
+    if symbol_rate <= 0:
+        raise DemodulationError("Symbol rate must be positive.")
+    if len(samples) < 64 * (sample_rate / symbol_rate):
+        raise InsufficientSamplesError("Need at least 64 symbols worth of samples.")
+    band = bandlimit_to_signal(samples, sample_rate)
+    fc, phase, _ = mpower_carrier(band, sample_rate, 4)
+    t = np.arange(len(band)) / sample_rate
+    # QPSK points at ±45° put the rails on the axes (ambiguity k·90°)
+    x = band * np.exp(-1j * (2 * np.pi * fc * t + phase - np.pi / 4))
+    x, sps = resample_to_sps(x, sample_rate, symbol_rate, target_sps=target_sps)
+    x = matched_filter(x, sps)
+    timing = gardner_timing_recovery(np.real(x).astype(np.complex128), sps)
+    if len(timing.symbols) < 16:
+        raise DemodulationError("Timing recovery produced too few symbols.")
+    strobes = timing.strobe_positions
+    idx = np.arange(len(x))
+    i = np.interp(strobes, idx, np.real(x))
+    q_off = np.interp(strobes + sps / 2.0, idx, np.imag(x))
+    q_al = np.interp(strobes, idx, np.imag(x))
+    settle = min(len(i) // 10, 200)
+    tail = timing.timing_error[len(timing.timing_error) * 3 // 4:]
+    t_lock = float(np.mean(np.abs(tail))) if len(tail) else 0.0
+    off = (i + 1j * q_off)[settle:]
+    al = (i + 1j * q_al)[settle:]
+    return off, al, strobes[settle:], sps, float(fc), t_lock
+
+
+def qpsk_fit(symbols: np.ndarray) -> float:
+    """|E[s⁴]| / E[|s|⁴]: ≈ 1 for a clean QPSK constellation, → 0 otherwise."""
+    s = np.asarray(symbols)
+    den = float(np.mean(np.abs(s) ** 4))
+    return float(np.abs(np.mean(s ** 4)) / den) if den > 0 else 0.0
+
+
+def demodulate_oqpsk(
+    samples: np.ndarray,
+    sample_rate: float,
+    symbol_rate: float,
+    coarse_cfo_hz: float | None = None,
+    target_sps: int = 8,
+) -> DemodResult:
+    """Offset-QPSK: carrier from the 4th-power line, timing from the I rail,
+    Q sampled half a symbol later; bits I then Q per symbol (+ → 1)."""
+    off, _, _, sps, fc, t_lock = oqpsk_rails(samples, sample_rate, symbol_rate, target_sps)
+    y = off / (np.sqrt(np.mean(np.abs(off) ** 2)) + 1e-12)
+    y = _feedforward_phase(y, 4)
+    bits = np.empty(2 * len(y), dtype=np.uint8)
+    bits[0::2] = (y.real > 0).astype(np.uint8)
+    bits[1::2] = (y.imag > 0).astype(np.uint8)
+    ref = (np.sign(y.real) + 1j * np.sign(y.imag)) / np.sqrt(2)
+    return DemodResult(
+        modulation=ModulationType.OQPSK, symbols=y.astype(np.complex64), bits=bits,
+        symbol_rate_hz=symbol_rate, samples_per_symbol=sps, bits_per_symbol=2,
+        evm_percent=evm_percent(y, ref), coarse_cfo_hz=fc, timing_lock=t_lock,
+        warnings=["OQPSK carrier phase is ambiguous to multiples of 90° (I/Q may be "
+                  "swapped or inverted), and which Q pairs with which I is ambiguous "
+                  "by one symbol."],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Differential PSK (DBPSK, π/4-DQPSK)
+# ---------------------------------------------------------------------------
+
+#: π/4-DQPSK phase steps → dibits (TETRA / IS-54 Gray mapping)
+_PI4_STEPS = np.array([np.pi / 4, 3 * np.pi / 4, -3 * np.pi / 4, -np.pi / 4])
+_PI4_BITS = np.array([[0, 0], [0, 1], [1, 1], [1, 0]], dtype=np.uint8)
+
+
+def differential_products(symbols: np.ndarray) -> np.ndarray:
+    """``s[k]·conj(s[k−1])`` normalised to unit magnitude."""
+    s = np.asarray(symbols, dtype=np.complex128)
+    d = s[1:] * np.conj(s[:-1])
+    return d / (np.abs(d) + 1e-12)
+
+
+def demodulate_dpsk(
+    samples: np.ndarray,
+    sample_rate: float,
+    symbol_rate: float,
+    variant: ModulationType = ModulationType.DPSK,
+    coarse_cfo_hz: float | None = None,
+    rrc_beta: float = 0.35,
+    target_sps: int = 8,
+) -> DemodResult:
+    """Differential detection – no carrier phase needed, so no ambiguity.
+
+    ``DPSK`` (DBPSK): bit 1 = 180° phase change.  ``PI4_DQPSK``: phase steps
+    ±45°/±135° carry two bits each.
+    """
+    syms, sps, cfo, t_lock = _linear_front_end(
+        samples, sample_rate, symbol_rate, coarse_cfo_hz, rrc_beta, target_sps
+    )
+    d = differential_products(syms[min(len(syms) // 10, 200):])
+    if variant == ModulationType.PI4_DQPSK:
+        # Residual CFO rotates every product by the same angle: remove it
+        d = d * np.exp(-1j * np.angle(-np.mean(d ** 4)) / 4)
+        k = np.argmin(np.abs(np.angle(d[:, None] * np.exp(-1j * _PI4_STEPS[None, :]))), axis=1)
+        bits = _PI4_BITS[k].reshape(-1)
+        ref = np.exp(1j * _PI4_STEPS[k])
+        bps = 2
+    else:
+        d = d * np.exp(-1j * np.angle(np.mean(d ** 2)) / 2)
+        bits = (d.real < 0).astype(np.uint8)
+        ref = np.sign(d.real) + 0j
+        bps = 1
+    return DemodResult(
+        modulation=variant, symbols=d.astype(np.complex64), bits=bits,
+        symbol_rate_hz=symbol_rate, samples_per_symbol=sps, bits_per_symbol=bps,
+        evm_percent=evm_percent(d, ref), coarse_cfo_hz=cfo, timing_lock=t_lock,
+        warnings=["Differential detection: the constellation shows phase *changes* "
+                  "between symbols."],
+    )
+
+
+# ---------------------------------------------------------------------------
 # Dispatcher
 # ---------------------------------------------------------------------------
 
@@ -416,7 +723,9 @@ def demodulate(
 ) -> DemodResult:
     """Demodulate *samples* according to *modulation*.
 
-    Raises :class:`DemodulationError` for modulations without a demodulator.
+    Analog modulations (AM, FM, SSB) return the recovered message in
+    ``DemodResult.audio`` and need no symbol rate.  Raises
+    :class:`DemodulationError` for modulations without a demodulator.
     """
     if modulation in (ModulationType.BPSK, ModulationType.QPSK,
                       ModulationType.PSK8, ModulationType.PSK16):
@@ -431,4 +740,23 @@ def demodulate(
         return demodulate_fsk(samples, sample_rate, symbol_rate,
                               order=modulation_order(modulation),
                               coarse_cfo_hz=coarse_cfo_hz, **kwargs)  # type: ignore[arg-type]
+    if modulation in (ModulationType.MSK, ModulationType.GMSK, ModulationType.GFSK):
+        return demodulate_fsk(samples, sample_rate, symbol_rate, order=2,
+                              coarse_cfo_hz=coarse_cfo_hz, modulation=modulation,
+                              **kwargs)  # type: ignore[arg-type]
+    if modulation in (ModulationType.ASK, ModulationType.OOK):
+        return demodulate_ask(samples, sample_rate, symbol_rate,
+                              order=2 if modulation == ModulationType.OOK else None,
+                              coarse_cfo_hz=coarse_cfo_hz, **kwargs)  # type: ignore[arg-type]
+    if modulation == ModulationType.OQPSK:
+        return demodulate_oqpsk(samples, sample_rate, symbol_rate,
+                                coarse_cfo_hz=coarse_cfo_hz, **kwargs)  # type: ignore[arg-type]
+    if modulation in (ModulationType.DPSK, ModulationType.PI4_DQPSK):
+        return demodulate_dpsk(samples, sample_rate, symbol_rate, variant=modulation,
+                               coarse_cfo_hz=coarse_cfo_hz, **kwargs)  # type: ignore[arg-type]
+    if modulation in ANALOG_MODULATIONS:
+        from src.dsp.analog import demodulate_analog
+
+        return demodulate_analog(samples, sample_rate, modulation,
+                                 coarse_cfo_hz=coarse_cfo_hz, **kwargs)  # type: ignore[arg-type]
     raise DemodulationError(f"No demodulator available for {modulation.value}.")

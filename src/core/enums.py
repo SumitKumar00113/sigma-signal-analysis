@@ -74,6 +74,8 @@ class ModulationType(StrEnum):
     AM = "AM"
     FM = "FM"
     PM = "PM"
+    SSB_USB = "SSB-USB"
+    SSB_LSB = "SSB-LSB"
 
     # Amplitude-shift keying
     ASK = "ASK"
@@ -93,7 +95,8 @@ class ModulationType(StrEnum):
     OQPSK = "OQPSK"
     PSK8 = "8-PSK"
     PSK16 = "16-PSK"
-    DPSK = "DPSK"
+    DPSK = "DPSK"                    # differentially encoded BPSK (DBPSK)
+    PI4_DQPSK = "π/4-DQPSK"
 
     # Quadrature amplitude modulation
     QAM16 = "16-QAM"

@@ -81,8 +81,31 @@ def pipeline_result_to_dict(result: PipelineResult, max_bits: int = 1_000_000) -
             "warnings": list(d.warnings),
             "bits_hex": np.packbits(bits[:n]).tobytes().hex() if n else "",
             "bits_truncated": len(d.bits) > max_bits,
+            "carrier_hz": d.carrier_hz,
+            "audio_seconds": (len(d.audio) / d.audio_rate_hz
+                              if d.audio is not None and d.audio_rate_hz > 0 else 0.0),
+            "audio_rate_hz": d.audio_rate_hz,
         }
     return out
+
+
+def export_audio_wav(result: PipelineResult, path: str | Path) -> float:
+    """Write the demodulated audio of an analog signal as 16-bit PCM WAV.
+
+    Returns the duration in seconds.  Raises ``ValueError`` if the result
+    carries no audio (digital modulation or no demodulation).
+    """
+    from scipy.io import wavfile
+
+    d = result.demod
+    if d is None or d.audio is None or d.audio_rate_hz <= 0:
+        raise ValueError("No demodulated audio in this result.")
+    audio = np.asarray(d.audio, dtype=np.float64)
+    peak = float(np.max(np.abs(audio))) if len(audio) else 0.0
+    pcm = (audio / peak * 0.9 * 32767).astype(np.int16) if peak > 0 else \
+        np.zeros(len(audio), dtype=np.int16)
+    wavfile.write(str(path), int(round(d.audio_rate_hz)), pcm)
+    return len(audio) / d.audio_rate_hz
 
 
 def export_pipeline_json(result: PipelineResult, path: str | Path) -> None:

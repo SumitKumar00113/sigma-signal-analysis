@@ -30,7 +30,7 @@ from src.core.models import (
     SignalRegion,
 )
 from src.dsp.classification import ClassificationResult, classify_modulation
-from src.dsp.demod import DemodResult, demodulate
+from src.dsp.demod import ANALOG_MODULATIONS, DemodResult, demodulate
 from src.dsp.detection import DetectionConfig, detect_signal_regions
 from src.dsp.measurements import (
     estimate_frequency_offset,
@@ -235,15 +235,29 @@ class AnalysisPipeline:
 
         # 4. Modulation classification
         modulation = cfg.modulation_override or ModulationType.UNKNOWN
-        if cfg.classify and signal_present and not cfg.modulation_override and symbol_rate > 0:
+        if cfg.classify and signal_present and not cfg.modulation_override:
             self._emit_progress(0.55, "Classifying modulation...")
             try:
+                # Analog modulations have no symbol rate, so classify even
+                # without one and let the classifier weigh its confidence
                 result.classification = classify_modulation(
                     heavy, fs, symbol_rate,
                     snr_db=result.snr_db,
-                    cfo_hz=result.frequency_offset_hz,
+                    cfo_hz=result.frequency_offset_hz if cfg.measure_freq_offset else None,
+                    symbol_rate_confidence=(1.0 if cfg.symbol_rate_override
+                                            else analysis.symbol_rate_confidence),
+                    rate_candidates=result.symbol_rate_candidates,
                 )
                 modulation = result.classification.modulation
+                c = result.classification
+                if c.symbol_rate_hz and not cfg.symbol_rate_override:
+                    analysis.warnings.append(
+                        f"Symbol rate revised {symbol_rate:,.1f} → {c.symbol_rate_hz:,.1f} baud "
+                        "(cleaner constellation).")
+                    symbol_rate = c.symbol_rate_hz
+                    analysis.symbol_rate_hz = symbol_rate
+                if c.carrier_hz is not None:
+                    result.frequency_offset_hz = float(c.carrier_hz)
                 analysis.modulation = modulation
                 analysis.modulation_confidence = result.classification.confidence
                 analysis.modulation_candidates = [
@@ -267,8 +281,9 @@ class AnalysisPipeline:
                 evidence=["Analyst override"],
             ))
 
-        # 5. Demodulation
-        if cfg.demodulate and modulation != ModulationType.UNKNOWN and symbol_rate > 0:
+        # 5. Demodulation (analog modulations need no symbol rate)
+        analog = modulation in ANALOG_MODULATIONS
+        if cfg.demodulate and modulation != ModulationType.UNKNOWN and (symbol_rate > 0 or analog):
             self._emit_progress(0.7, f"Demodulating {modulation.value}...")
             try:
                 result.demod = demodulate(
@@ -276,12 +291,22 @@ class AnalysisPipeline:
                     coarse_cfo_hz=result.frequency_offset_hz,
                 )
                 analysis.warnings.extend(result.demod.warnings)
-                analysis.parameters.append(ParameterEstimate(
-                    parameter="evm_percent", value=round(result.demod.evm_percent, 1),
-                    status=ParameterStatus.INFERRED, confidence=0.9,
-                    evidence=[f"{result.demod.num_symbols:,} symbols, "
-                              f"{result.demod.num_bits:,} bits recovered"],
-                ))
+                if analog and result.demod.audio is not None:
+                    d = result.demod
+                    analysis.parameters.append(ParameterEstimate(
+                        parameter="audio_seconds",
+                        value=round(len(d.audio) / max(d.audio_rate_hz, 1.0), 2),
+                        status=ParameterStatus.INFERRED, confidence=0.9,
+                        evidence=[f"{modulation.value} demodulated to audio at "
+                                  f"{d.audio_rate_hz:,.0f} Hz"],
+                    ))
+                else:
+                    analysis.parameters.append(ParameterEstimate(
+                        parameter="evm_percent", value=round(result.demod.evm_percent, 1),
+                        status=ParameterStatus.INFERRED, confidence=0.9,
+                        evidence=[f"{result.demod.num_symbols:,} symbols, "
+                                  f"{result.demod.num_bits:,} bits recovered"],
+                    ))
             except SigmaError as exc:
                 result.stage_errors["demodulation"] = str(exc)
             except Exception as exc:  # noqa: BLE001
