@@ -328,6 +328,7 @@ def mpower_carrier(
     samples: np.ndarray,
     sample_rate: float,
     order: int = 4,
+    reference_hz: float | None = None,
 ) -> tuple[float, float, float]:
     """Carrier line of ``x^order`` (M-PSK / OQPSK carrier recovery).
 
@@ -335,6 +336,10 @@ def mpower_carrier(
     compares the peak with its local spectral neighbourhood; the phase is
     ambiguous by multiples of 2π/order.  A ratio well above ~30 means the
     line is real.
+
+    The line sits at order·f_c, which wraps around the sample rate, so f_c
+    is only known modulo fs/order; the candidate nearest *reference_hz*
+    (default: the spectral-centroid estimate) is returned.
     """
     x = np.asarray(samples, dtype=np.complex128)
     n = len(x)
@@ -349,13 +354,22 @@ def mpower_carrier(
     f_line = (np.fft.fftfreq(n, 1.0 / sample_rate)[k] + delta * sample_rate / n)
     t = np.arange(n) / sample_rate
     phase = float(np.angle(np.sum(x ** order * np.exp(-2j * np.pi * f_line * t))))
+    # Resolve the fs/order ambiguity of the wrapped line
+    if reference_hz is None:
+        reference_hz = estimate_frequency_offset(x, sample_rate)
+    step = sample_rate / order
+    base = f_line / order
+    wraps = np.round((reference_hz - base) / step)
+    fc = base + wraps * step
+    # A shift of k·fs/order also rotates the phase reference: e^{j2π k n/order}
+    # has phase 0 at n = 0, so the returned phase is unchanged
     # A spectral *line* must stand out from its own neighbourhood, not
     # just from the (noise-dominated) median of the whole band
     w = max(8, min(n // 50, 400))
     idx = np.arange(k - w, k + w + 1) % n
     neighbours = mag[idx[np.abs(np.arange(-w, w + 1)) > 3]]
     ratio = float(b / (np.median(neighbours) + 1e-300))
-    return float(f_line / order), phase / order, ratio
+    return float(fc), phase / order, ratio
 
 
 def mpower_line_pair(

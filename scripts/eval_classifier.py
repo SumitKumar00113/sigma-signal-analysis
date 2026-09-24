@@ -133,7 +133,7 @@ def run(trials: int, snrs: list[float]) -> None:
                 np.random.seed(int(rng.integers(1 << 30)))
                 rs = float(rng.choice([1200, 2400, 4800, 9600]))
                 fs = rs * float(rng.choice([10, 16, 20]))
-                f0 = float(rng.uniform(-0.1, 0.1) * fs)
+                f0 = float(rng.uniform(-0.3, 0.3) * fs)
                 x, bits = gen(3000, rs, fs, snr, f0)
                 res = AnalysisPipeline().run(x, RecordingMetadata(sample_rate_hz=fs))
                 tally.add(res, truth)
@@ -158,7 +158,7 @@ def run(trials: int, snrs: list[float]) -> None:
             for _ in range(trials):
                 np.random.seed(int(rng.integers(1 << 30)))
                 fs = float(rng.choice([24000, 48000]))
-                f0 = float(rng.uniform(-0.1, 0.1) * fs)
+                f0 = float(rng.uniform(-0.3, 0.3) * fs)
                 x, msg = agen(int(1.5 * fs), fs, snr, f0)
                 res = AnalysisPipeline().run(x, RecordingMetadata(sample_rate_hz=fs))
                 tally.add(res, truth)

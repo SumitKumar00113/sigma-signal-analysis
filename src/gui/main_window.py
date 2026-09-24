@@ -229,6 +229,7 @@ class MainWindow(QMainWindow):
         self._nav_tree = QTreeWidget()
         self._nav_tree.setHeaderLabels(["Name", "Status"])
         self._nav_tree.setAlternatingRowColors(True)
+        self._nav_tree.itemClicked.connect(self._on_nav_item_clicked)
 
         recordings_item = QTreeWidgetItem(["📁 Recordings", ""])
         self._nav_tree.addTopLevelItem(recordings_item)
@@ -495,25 +496,9 @@ class MainWindow(QMainWindow):
             return
         self._last_result = result
         a = result.analysis
-
-        # Results dock
-        self._results.update_result(result)
+        self._show_result(result)
         self._results_dock.raise_()
-
-        # Constellation + bits (digital) or audio (analog)
         has_audio = result.demod is not None and result.demod.audio is not None
-        self._save_audio_action.setEnabled(has_audio)
-        if result.demod is not None and not has_audio:
-            d = result.demod
-            self._constellation_viewer.set_symbols(
-                d.symbols, f"{d.modulation.value}  ·  EVM {d.evm_percent:.1f}%"
-            )
-            self._decoding_panel.set_bits(
-                d.bits, f"{d.modulation.value} @ {d.symbol_rate_hz:,.0f} baud"
-            )
-        else:
-            self._constellation_viewer.clear()
-            self._decoding_panel.clear()
 
         # Navigator tree
         self._populate_tree(result)
@@ -543,6 +528,51 @@ class MainWindow(QMainWindow):
             self._log(f"  ⚠ {stage}: {err}")
         self._log(f"  ({result.processing_time_ms:,.0f} ms)")
 
+    def _show_result(self, result: PipelineResult) -> None:
+        """Results panel, constellation, bits and burst overlay for the
+        current main result (after an analysis or a burst selection)."""
+        self._results.update_result(result)
+        has_audio = result.demod is not None and result.demod.audio is not None
+        self._save_audio_action.setEnabled(has_audio)
+        if result.demod is not None and not has_audio:
+            d = result.demod
+            self._constellation_viewer.set_symbols(
+                d.symbols, f"{d.modulation.value}  ·  EVM {d.evm_percent:.1f}%"
+            )
+            src = f"{d.modulation.value} @ {d.symbol_rate_hz:,.0f} baud"
+            if result.primary_burst is not None and result.bursts:
+                src += f", burst {result.bursts[result.primary_burst].index + 1}"
+            self._decoding_panel.set_bits(d.bits, src)
+        else:
+            self._constellation_viewer.clear()
+            self._decoding_panel.clear()
+        centre = result.metadata.center_frequency_hz
+        primary = (result.bursts[result.primary_burst].index
+                   if result.primary_burst is not None and result.bursts else None)
+        self._waterfall_viewer.set_regions([
+            (r.start_time_sec, r.end_time_sec,
+             r.center_frequency_hz - centre - r.bandwidth_hz / 2,
+             r.center_frequency_hz - centre + r.bandwidth_hz / 2,
+             f"{i + 1}: {r.label}" if r.label else str(i + 1), i == primary)
+            for i, r in enumerate(result.regions)
+        ] if len(result.regions) > 1 or result.bursts else [])
+
+    def _on_nav_item_clicked(self, item: QTreeWidgetItem, _column: int = 0) -> None:
+        idx = item.data(0, Qt.UserRole)
+        result = self._last_result
+        if not isinstance(idx, int) or result is None:
+            return
+        burst = next((b for b in result.bursts if b.index == idx), None)
+        if burst is None:
+            return
+        AnalysisPipeline.adopt_burst(result, burst)
+        self._show_result(result)
+        a = result.analysis
+        self._log(f"▶ Burst {idx + 1} ({burst.region.start_time_sec:.3f}–"
+                  f"{burst.region.end_time_sec:.3f} s, {burst.offset_hz:+,.0f} Hz): "
+                  f"{a.modulation.value} ({a.modulation_confidence:.0%})"
+                  + (f", {a.symbol_rate_hz:,.1f} baud" if a.symbol_rate_hz > 0 else ""))
+
     def _populate_tree(self, result: PipelineResult) -> None:
         """Fill the Regions / Jobs / Results nodes of the project navigator."""
         regions_item = self._nav_tree.topLevelItem(1)
@@ -551,11 +581,17 @@ class MainWindow(QMainWindow):
         for item in (regions_item, results_item):
             item.takeChildren()
 
-        for i, r in enumerate(result.regions, 1):
+        centre = result.metadata.center_frequency_hz
+        for i, r in enumerate(result.regions):
+            label = f" · {r.label}" if r.label else ""
             child = QTreeWidgetItem([
-                f"Region {i}: BW {r.bandwidth_hz / 1e3:,.1f} kHz",
+                f"Burst {i + 1}{label}: {r.start_time_sec:.3f}–{r.end_time_sec:.3f} s, "
+                f"{r.center_frequency_hz - centre:+,.0f} Hz, BW {r.bandwidth_hz / 1e3:,.1f} kHz",
                 f"SNR {r.snr_db:.1f} dB",
             ])
+            child.setData(0, Qt.UserRole, i)
+            if any(b.index == i for b in result.bursts):
+                child.setToolTip(0, "Click to show this burst's analysis")
             regions_item.addChild(child)
         regions_item.setExpanded(True)
 

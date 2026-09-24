@@ -19,12 +19,15 @@ def _transforms(k: int) -> Iterator[tuple[str, Callable[[np.ndarray], np.ndarray
         yield "swap+inv0", lambda g: g[:, ::-1] ^ np.array([1, 0], dtype=np.uint8)
         yield "swap+inv1", lambda g: g[:, ::-1] ^ np.array([0, 1], dtype=np.uint8)
     if k == 4:
+        # 16-QAM, Gray-coded per axis: negating an axis flips only its first
+        # bit (00↔10, 01↔11); a 90° rotation also swaps the I and Q pairs
         swap = lambda g: np.hstack([g[:, 2:], g[:, :2]])  # noqa: E731
-        yield "iq swap", swap
-        yield "inv I", lambda g: g ^ np.array([1, 1, 0, 0], dtype=np.uint8)
-        yield "inv Q", lambda g: g ^ np.array([0, 0, 1, 1], dtype=np.uint8)
-        yield "swap, inv I", lambda g: swap(g) ^ np.array([1, 1, 0, 0], dtype=np.uint8)
-        yield "swap, inv Q", lambda g: swap(g) ^ np.array([0, 0, 1, 1], dtype=np.uint8)
+        for sw in (False, True):
+            for ni in (0, 1):
+                for nq in (0, 1):
+                    mask = np.array([ni, 0, nq, 0], dtype=np.uint8)
+                    name = f"{'swap ' if sw else ''}negI={ni} negQ={nq}"
+                    yield name, (lambda g, m=mask, s=sw: (swap(g) if s else g) ^ m)
 
 
 def ber_oqpsk(rx_bits: np.ndarray, tx_bits: np.ndarray) -> float:
