@@ -4,10 +4,12 @@ A central tab that takes the demodulated bits and lets the analyst
 run them through, in order:
 
 1. **De-interleaving** – block, convolutional, diagonal, pseudo-random,
-   each with its parameters.
+   each with its parameters, or blind auto-detection of type, size and
+   alignment (:mod:`src.decoding.interleaver_id`).
 2. **FEC decoding** – convolutional (Viterbi, standard or custom
    polynomials, optional puncturing), Reed-Solomon (n, k, field
-   parameters), concatenated RS+conv, or experimental LDPC.
+   parameters), concatenated RS+conv, or experimental LDPC; or blind
+   auto-detection of the code (:mod:`src.decoding.fec_id`).
 3. **Correlation** – autocorrelation for frame-period detection, sync
    word search (binary or hex, with error tolerance, inverted-stream
    aware), and header/payload framing.
@@ -24,6 +26,7 @@ import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QFileDialog,
     QFormLayout,
@@ -51,6 +54,8 @@ from src.decoding.correlation import (
     find_sync_word,
     split_frames,
 )
+from src.decoding.fec_id import ConvHypothesis, FECIdentification, identify_fec
+from src.decoding.interleaver_id import InterleaverIdentification, identify_interleaver
 from src.decoding.interleaving import InterleaverSpec, deinterleave
 from src.decoding.ldpc import ldpc_decode, ldpc_from_H, make_regular_ldpc
 from src.decoding.reed_solomon import ReedSolomon, rs_decode_stream
@@ -64,6 +69,7 @@ from src.gui.theme import (
     TEXT_PRIMARY,
     TEXT_SECONDARY,
 )
+from src.gui.workers import Worker, WorkerPool
 
 _MAX_DISPLAY_CHARS = 60_000
 _STAGES = ("raw", "deinterleaved", "decoded")
@@ -81,6 +87,7 @@ class DecodingPanel(QWidget):
         super().__init__(parent)
         self._stages: dict[str, np.ndarray] = {}
         self._source_label = ""
+        self._busy = False
         self._setup_ui()
         self._refresh_view_combo()
 
@@ -195,10 +202,28 @@ class DecodingPanel(QWidget):
         for pairs in self._il_widgets.values():
             for lbl, w in pairs:
                 form.addRow(lbl, w)
+        self._il_offset = spin(0, 10_000_000, 0)
+        self._il_offset.setToolTip("Bits to drop before de-interleaving (block alignment)")
+        form.addRow("Skip bits:", self._il_offset)
 
+        btns = QHBoxLayout()
         btn = QPushButton("Apply de-interleave")
         btn.clicked.connect(self._apply_deinterleave)
-        form.addRow(btn)
+        btns.addWidget(btn)
+        self._il_auto_btn = QPushButton("🔍 Auto-detect")
+        self._il_auto_btn.setToolTip(
+            "Blind search for block, diagonal and convolutional interleavers (and pseudo-random "
+            "seeds if block sizes are given). Needs a convolutional code in the stream; the code "
+            "selected under FEC is tried first.")
+        self._il_auto_btn.clicked.connect(self._auto_detect_interleaver)
+        btns.addWidget(self._il_auto_btn)
+        form.addRow(btns)
+        self._il_pr_blocks = QLineEdit("")
+        self._il_pr_blocks.setPlaceholderText("pseudo-random block sizes, e.g. 128,256 (optional)")
+        form.addRow("Auto: PR blocks:", self._il_pr_blocks)
+        self._il_pr_seeds = spin(1, 1_000_000, 256)
+        self._il_pr_seeds.setToolTip("Pseudo-random auto-detect tries seeds 0 … N−1")
+        form.addRow("Auto: PR seeds:", self._il_pr_seeds)
         self._il_result = QLabel("")
         _small(self._il_result)
         form.addRow(self._il_result)
@@ -257,6 +282,9 @@ class DecodingPanel(QWidget):
         self._rs_gen = QSpinBox()
         self._rs_gen.setRange(1, 254)
         self._rs_gen.setValue(1)
+        self._rs_offset = QSpinBox()
+        self._rs_offset.setRange(0, 10_000_000)
+        self._rs_offset.setToolTip("Bits to drop at the RS decoder input (codeword alignment)")
 
         self._ldpc_n = QSpinBox()
         self._ldpc_n.setRange(12, 4096)
@@ -273,7 +301,8 @@ class DecodingPanel(QWidget):
             "rs": [(QLabel("RS n:"), self._rs_n), (QLabel("RS k:"), self._rs_k),
                    (QLabel("Primitive poly:"), self._rs_prim),
                    (QLabel("First root (fcr):"), self._rs_fcr),
-                   (QLabel("Generator exp (prim):"), self._rs_gen)],
+                   (QLabel("Generator exp (prim):"), self._rs_gen),
+                   (QLabel("RS skip bits:"), self._rs_offset)],
             "ldpc": [(QLabel("LDPC n (regular 3,6):"), self._ldpc_n),
                      (QLabel("Iterations:"), self._ldpc_iter)],
         }
@@ -281,9 +310,25 @@ class DecodingPanel(QWidget):
             for lbl, w in pairs:
                 form.addRow(lbl, w)
 
+        self._fec_offset = QSpinBox()
+        self._fec_offset.setRange(0, 10_000_000)
+        self._fec_offset.setToolTip("Bits to drop before decoding (code phase / alignment)")
+        form.addRow("Skip bits:", self._fec_offset)
+        self._fec_invert = QCheckBox("Invert input bits")
+        form.addRow(self._fec_invert)
+
+        btns = QHBoxLayout()
         btn = QPushButton("Decode")
         btn.clicked.connect(self._apply_fec)
-        form.addRow(btn)
+        btns.addWidget(btn)
+        self._fec_auto_btn = QPushButton("🔍 Auto-detect")
+        self._fec_auto_btn.setToolTip(
+            "Blind identification: convolutional codes (library incl. punctured, and blind "
+            "rate-1/n generator recovery), Reed-Solomon, concatenated RS+conv, and generic "
+            "linear block structure.")
+        self._fec_auto_btn.clicked.connect(self._auto_detect_fec)
+        btns.addWidget(self._fec_auto_btn)
+        form.addRow(btns)
         self._fec_result = QLabel("")
         _small(self._fec_result)
         form.addRow(self._fec_result)
@@ -419,8 +464,9 @@ class DecodingPanel(QWidget):
             block=self._il_block.value(), seed=self._il_seed.value(),
             generator=self._il_gen.currentText(),
         )
+        skip = self._il_offset.value()
         try:
-            out = deinterleave(raw, spec)
+            out = deinterleave(raw[skip:], spec)
         except Exception as exc:  # noqa: BLE001
             self._set_result(self._il_result, f"✗ {exc}", False)
             return
@@ -456,6 +502,10 @@ class DecodingPanel(QWidget):
         if len(bits) == 0:
             self._set_result(self._fec_result, "No bits loaded.", None)
             return
+        bits = bits[self._fec_offset.value():]
+        if self._fec_invert.isChecked():
+            bits = bits ^ 1
+        rs_skip = self._rs_offset.value()
         t = FECType(self._fec_type.currentData())
         try:
             ok: bool | None = True
@@ -472,7 +522,7 @@ class DecodingPanel(QWidget):
                        f"({r.estimated_errors / max(1, len(bits)):.2%}).")
             elif t == FECType.REED_SOLOMON:
                 rs = self._rs_code()
-                out, results = rs_decode_stream(bits, rs)
+                out, results = rs_decode_stream(bits[rs_skip:], rs)
                 self._stages["decoded"] = out
                 good = sum(1 for x in results if x.success)
                 corr = sum(x.corrected for x in results)
@@ -483,7 +533,7 @@ class DecodingPanel(QWidget):
                 code = self._conv_code()
                 inner = viterbi_decode(bits, code, terminated=False)
                 rs = self._rs_code()
-                out, results = rs_decode_stream(inner.bits, rs)
+                out, results = rs_decode_stream(inner.bits[rs_skip:], rs)
                 self._stages["decoded"] = out
                 good = sum(1 for x in results if x.success)
                 msg = (f"Concatenated: Viterbi corrected {inner.estimated_errors:,} bits → "
@@ -511,6 +561,143 @@ class DecodingPanel(QWidget):
             self._set_result(self._fec_result, f"✗ {type(exc).__name__}: {exc}", False)
         self._refresh_view_combo()
         self._update_status()
+
+    # ---- Auto-detection (background workers) --------------------------
+
+    def _set_busy(self, busy: bool) -> None:
+        self._busy = busy
+        self._il_auto_btn.setEnabled(not busy)
+        self._fec_auto_btn.setEnabled(not busy)
+
+    def _selected_conv_hypothesis(self) -> ConvHypothesis | None:
+        """The convolutional code currently configured under FEC, if any."""
+        if FECType(self._fec_type.currentData()) not in (FECType.CONVOLUTIONAL,
+                                                         FECType.CONCATENATED):
+            return None
+        try:
+            code = self._conv_code()
+        except ValueError:
+            return None
+        return ConvHypothesis("Selected code", code.constraint_length, code.generators,
+                              code.puncture)
+
+    def _auto_detect_interleaver(self) -> None:
+        raw = self._stages.get("raw")
+        if raw is None or len(raw) == 0:
+            self._set_result(self._il_result, "No bits loaded.", None)
+            return
+        if self._busy:
+            return
+        try:
+            text = self._il_pr_blocks.text().replace(" ", "")
+            blocks = [int(v) for v in text.split(",") if v]
+        except ValueError:
+            self._set_result(self._il_result, "✗ PR block sizes must be integers.", False)
+            return
+        comb = None
+        selected = self._selected_conv_hypothesis()
+        if selected is not None:
+            from src.decoding.fec_id import common_conv_hypotheses
+            comb = [selected] + common_conv_hypotheses()
+        worker = Worker(identify_interleaver, raw.copy(), comb_hypotheses=comb,
+                        pseudo_random_blocks=blocks, seeds=range(self._il_pr_seeds.value()))
+        worker.signals.progress.connect(self._on_il_progress)
+        worker.signals.finished.connect(self._on_interleaver_detected)
+        worker.signals.error.connect(self._on_il_error)
+        self._set_busy(True)
+        self._set_result(self._il_result, "Searching for an interleaver…", None)
+        WorkerPool.instance().start(worker)
+
+    def _on_il_progress(self, fraction: float, message: str) -> None:
+        self._set_result(self._il_result, f"Searching… {fraction:.0%} · {message}", None)
+
+    def _on_il_error(self, message: str) -> None:
+        self._set_busy(False)
+        self._set_result(self._il_result, f"✗ Auto-detect failed: {message}", False)
+
+    def _on_interleaver_detected(self, result: InterleaverIdentification) -> None:
+        self._set_busy(False)
+        best = result.best
+        if best is None:
+            self._set_result(self._il_result, result.summary(), None)
+            return
+        spec = best.spec
+        for i in range(self._il_type.count()):
+            if self._il_type.itemData(i) == spec.kind:
+                self._il_type.setCurrentIndex(i)
+                break
+        self._il_rows.setValue(spec.rows)
+        self._il_cols.setValue(spec.cols)
+        self._il_branches.setValue(spec.branches)
+        self._il_delay.setValue(spec.delay)
+        self._il_block.setValue(spec.block)
+        self._il_seed.setValue(spec.seed)
+        self._il_gen.setCurrentText(spec.generator)
+        self._il_offset.setValue(best.offset)
+        self._apply_deinterleave()
+        applied = self._il_result.text()
+        self._set_result(self._il_result, f"✓ Detected: {result.summary()}\n{applied}")
+
+    def _auto_detect_fec(self) -> None:
+        bits = self._input_for_fec()
+        if len(bits) == 0:
+            self._set_result(self._fec_result, "No bits loaded.", None)
+            return
+        if self._busy:
+            return
+        worker = Worker(identify_fec, bits.copy())
+        worker.signals.progress.connect(self._on_fec_progress)
+        worker.signals.finished.connect(self._on_fec_detected)
+        worker.signals.error.connect(self._on_fec_error)
+        self._set_busy(True)
+        self._set_result(self._fec_result, "Identifying FEC…", None)
+        WorkerPool.instance().start(worker)
+
+    def _on_fec_progress(self, fraction: float, message: str) -> None:
+        self._set_result(self._fec_result, f"Identifying… {fraction:.0%} · {message}", None)
+
+    def _on_fec_error(self, message: str) -> None:
+        self._set_busy(False)
+        self._set_result(self._fec_result, f"✗ Auto-detect failed: {message}", False)
+
+    def _select_fec_type(self, fec: FECType) -> None:
+        for i in range(self._fec_type.count()):
+            if self._fec_type.itemData(i) == fec:
+                self._fec_type.setCurrentIndex(i)
+                return
+
+    def _on_fec_detected(self, result: FECIdentification) -> None:
+        self._set_busy(False)
+        conv, rs = result.conv, result.rs
+        if conv is None and rs is None:
+            self._set_result(self._fec_result, result.summary(), None)
+            return
+        self._fec_offset.setValue(0)
+        self._fec_invert.setChecked(False)
+        self._rs_offset.setValue(0)
+        if conv is not None:
+            self._select_fec_type(FECType.CONCATENATED if rs else FECType.CONVOLUTIONAL)
+            code = conv.code
+            preset = next((name for name, (k, gens) in STANDARD_CODES.items()
+                           if k == code.constraint_length and gens == code.generators), None)
+            self._conv_preset.setCurrentText(preset or "Custom…")
+            self._conv_k.setValue(code.constraint_length)
+            self._conv_polys.setText(",".join(f"{g:o}" for g in code.generators))
+            self._conv_punct.setText(conv.puncture_text)
+            self._fec_offset.setValue(conv.phase)
+            self._fec_invert.setChecked(conv.inverted)
+        else:
+            self._select_fec_type(FECType.REED_SOLOMON)
+        if rs is not None:
+            self._rs_n.setValue(rs.n)
+            self._rs_k.setValue(rs.k)
+            self._rs_prim.setText(f"0x{rs.prim_poly:x}")
+            self._rs_fcr.setValue(rs.fcr)
+            self._rs_gen.setValue(1)
+            self._rs_offset.setValue(rs.bit_offset)
+        self._apply_fec()
+        decoded = self._fec_result.text()
+        self._set_result(self._fec_result, f"✓ Detected: {result.summary()}\n{decoded}")
 
     def _run_autocorrelation(self) -> None:
         bits = self.current_bits()

@@ -137,6 +137,7 @@ def viterbi_decode(
     n = code.n
 
     # Un-puncture: insert zero-reliability erasures where bits were removed
+    received_mask: np.ndarray | None = None      # True where a bit was actually received
     if code.puncture:
         pat = np.asarray(code.puncture, dtype=bool)
         per_period = int(pat.sum())
@@ -145,6 +146,8 @@ def viterbi_decode(
         full_mask = np.resize(pat, len(full))
         full[full_mask] = np.pad(r, (0, full_mask.sum() - len(r)))
         r = full
+        received_mask = full_mask.copy()
+        received_mask[np.flatnonzero(full_mask)[len(received):]] = False   # padding
         # Erased positions carry 0 reliability in soft mode; in hard mode
         # we mark them with 0.5 so both hypotheses cost the same
         if not soft:
@@ -207,7 +210,11 @@ def viterbi_decode(
     else:
         hard_rx = np.round(r.reshape(-1)).astype(np.uint8)
     m = min(len(re_coded), len(hard_rx))
-    est_err = int(np.sum(re_coded[:m] != hard_rx[:m]))
+    disagree = re_coded[:m] != hard_rx[:m]
+    if received_mask is not None:
+        # Punctured (erased) positions carry no information – don't count them
+        disagree &= received_mask[:m]
+    est_err = int(np.sum(disagree))
 
     if terminated and len(decoded) >= code.constraint_length - 1:
         decoded = decoded[: len(decoded) - (code.constraint_length - 1)]

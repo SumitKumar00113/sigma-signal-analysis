@@ -27,6 +27,9 @@ src/
 │   ├── reed_solomon.py    # RS(n,k) over GF(2^8), configurable field, shortened codes
 │   ├── ldpc.py            # Regular LDPC, min-sum decoder (experimental)
 │   ├── interleaving.py    # Block, convolutional, diagonal, pseudo-random
+│   ├── fec_id.py          # Blind FEC identification (conv library/blind, RS, rank)
+│   ├── interleaver_id.py  # Blind interleaver identification (type, size, alignment)
+│   ├── gf2.py             # GF(2) rank / null space on bit-packed rows
 │   └── correlation.py     # Autocorrelation, sync-word search, framing
 ├── gui/            # PySide6 main window, viewers, results dock, decoding workbench
 └── reporting/      # JSON and HTML export (metadata, analysis, recovered bits)
@@ -43,6 +46,8 @@ src/
 - **Modulation Classification**: Explainable two-stage classifier — envelope/instantaneous-frequency test for FSK (2/4-level), noise-corrected fourth-order cumulants for BPSK, QPSK, 8-PSK, 16-QAM, 64-QAM. Ranked candidates and evidence are shown in the GUI.
 - **Demodulation**: RRC matched filter → Gardner timing recovery → M-th power carrier estimate → Costas phase tracking → Gray de-mapping for M-PSK and square QAM; band-limited frequency discriminator with k-means level slicing for M-FSK. Produces symbols (constellation view), hard bits, EVM.
 - **Decoding Workbench**: De-interleave (block, convolutional, diagonal, pseudo-random), FEC decode (Viterbi with standard/custom polynomials and puncturing, Reed-Solomon with configurable field parameters, concatenated RS+conv, experimental LDPC), then bit-stream correlation: autocorrelation for frame period, sync-word search with error tolerance and inversion detection, header/payload framing, and bit export.
+- **Blind FEC Identification** (🔍 *Auto-detect* in the decoding workbench): convolutional codes are identified from the parity checks of their dual code. The library covers K = 3…9, rate 1/2 and 1/3, every generator order, and the DVB/802.11 puncture patterns 2/3–7/8. Detection works at several percent BER and reports the code phase, bit inversion and channel BER. Unknown rate-1/n codes have their generators recovered blindly. Reed-Solomon codes are identified by n, k, field polynomial, first root and exact alignment, even when every block contains symbol errors. Concatenated RS + convolutional chains are found by decoding the inner code first. Unknown binary block codes (e.g. Hamming) are reported by length and rate.
+- **Blind Interleaver Identification**: block, diagonal and convolutional interleavers are found by a stride scan over the whole code library. Short-column block and short-branch convolutional interleavers use a comb search. Pseudo-random (LCG/NumPy) interleavers use a seed search. Each result gives the dimensions and the exact bit alignment, verified by restoring the code structure.
 - **Synthetic Signal Generation**: Built-in generators for BPSK, QPSK, 16-QAM, and 2-FSK signals, with channel impairment models (AWGN, frequency offsets, IQ imbalances, phase noise) for testing and validation.
 
 ## Getting Started
@@ -114,6 +119,8 @@ SNR estimates are within 0.3 dB and symbol-rate estimates within 1 Hz of ground 
 
 - Region detection is frequency-only; bursty signals are treated as continuous.
 - LDPC supports only a regular demo code; real systems need their specific parity-check matrix.
+- Interleaver identification needs a convolutional code inside the interleaver. Punctured codes whose parity checks are longer than the interleaver runs are only found when the code is selected under FEC first. Diagonal interleavers need columns longer than the code's check span. Pseudo-random identification searches seeds 0…N−1 for the block sizes you give it.
+- Reed-Solomon identification assumes GF(2⁸), generator α (fcr 0 or 1), ≥ 6 parity symbols and no CCSDS dual-basis mapping. Rank-based block-code detection needs a near error-free stream.
 - The absolute sample rate of a headerless file cannot be recovered; only consistent candidates are offered.
 - Future: deep-learning classifier for low-SNR / exotic modulations, burst segmentation, batch CLI.
 
