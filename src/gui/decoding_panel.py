@@ -8,7 +8,8 @@ run them through, in order:
    alignment (:mod:`src.decoding.interleaver_id`).
 2. **FEC decoding** – convolutional (Viterbi, standard or custom
    polynomials, optional puncturing), Reed-Solomon (n, k, field
-   parameters), concatenated RS+conv, or experimental LDPC; or blind
+   parameters), concatenated RS+conv, or LDPC (standard codes from
+   .alist / .qc files, downloadable from a catalogue); or blind
    auto-detection of the code (:mod:`src.decoding.fec_id`).
 3. **Correlation** – autocorrelation for frame-period detection, sync
    word search (binary or hex, with error tolerance, inverted-stream
@@ -28,12 +29,16 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QDialog,
+    QDialogButtonBox,
     QFileDialog,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
@@ -57,7 +62,13 @@ from src.decoding.correlation import (
 from src.decoding.fec_id import ConvHypothesis, FECIdentification, identify_fec
 from src.decoding.interleaver_id import InterleaverIdentification, identify_interleaver
 from src.decoding.interleaving import InterleaverSpec, deinterleave
-from src.decoding.ldpc import ldpc_decode, ldpc_from_H, make_regular_ldpc
+from src.decoding.ldpc import (
+    LDPCCode,
+    ldpc_decode_stream,
+    ldpc_from_H,
+    load_ldpc,
+    make_regular_ldpc,
+)
 from src.decoding.reed_solomon import ReedSolomon, rs_decode_stream
 from src.decoding.viterbi import STANDARD_CODES, ConvCode, viterbi_decode
 from src.gui.theme import (
@@ -254,7 +265,7 @@ class DecodingPanel(QWidget):
         self._fec_type.addItem("Convolutional (Viterbi)", FECType.CONVOLUTIONAL)
         self._fec_type.addItem("Reed-Solomon", FECType.REED_SOLOMON)
         self._fec_type.addItem("Concatenated (RS outer + Conv inner)", FECType.CONCATENATED)
-        self._fec_type.addItem("LDPC (experimental, regular code)", FECType.LDPC)
+        self._fec_type.addItem("LDPC", FECType.LDPC)
         self._fec_type.currentIndexChanged.connect(self._on_fec_type_changed)
         form.addRow("Code:", self._fec_type)
 
@@ -286,9 +297,23 @@ class DecodingPanel(QWidget):
         self._rs_offset.setRange(0, 10_000_000)
         self._rs_offset.setToolTip("Bits to drop at the RS decoder input (codeword alignment)")
 
+        self._ldpc_codes: dict[str, LDPCCode] = {}
+        self._ldpc_code = QComboBox()
+        self._ldpc_code.setToolTip("Installed standard codes (~/.sigma/ldpc) and loaded files")
         self._ldpc_n = QSpinBox()
         self._ldpc_n.setRange(12, 4096)
         self._ldpc_n.setValue(96)
+        self._ldpc_n.setToolTip("Length of the random regular (3,6) demo code")
+        ldpc_btns = QWidget()
+        lb = QHBoxLayout(ldpc_btns)
+        lb.setContentsMargins(0, 0, 0, 0)
+        load_btn = QPushButton("Load .alist/.qc…")
+        load_btn.clicked.connect(self._load_ldpc_file)
+        lb.addWidget(load_btn)
+        dl_btn = QPushButton("⬇ Standard codes…")
+        dl_btn.setToolTip("Download DVB-S2, Wi-Fi, WiMAX, 5G NR, CCSDS, 10GBASE-T matrices")
+        dl_btn.clicked.connect(self._download_ldpc_codes)
+        lb.addWidget(dl_btn)
         self._ldpc_iter = QSpinBox()
         self._ldpc_iter.setRange(1, 200)
         self._ldpc_iter.setValue(50)
@@ -303,7 +328,9 @@ class DecodingPanel(QWidget):
                    (QLabel("First root (fcr):"), self._rs_fcr),
                    (QLabel("Generator exp (prim):"), self._rs_gen),
                    (QLabel("RS skip bits:"), self._rs_offset)],
-            "ldpc": [(QLabel("LDPC n (regular 3,6):"), self._ldpc_n),
+            "ldpc": [(QLabel("LDPC code:"), self._ldpc_code),
+                     (QLabel("Demo code n:"), self._ldpc_n),
+                     (QLabel(""), ldpc_btns),
                      (QLabel("Iterations:"), self._ldpc_iter)],
         }
         for pairs in self._fec_widgets.values():
@@ -318,6 +345,7 @@ class DecodingPanel(QWidget):
         form.addRow(self._fec_invert)
 
         btns = QHBoxLayout()
+        self._refresh_ldpc_codes()
         btn = QPushButton("Decode")
         btn.clicked.connect(self._apply_fec)
         btns.addWidget(btn)
@@ -540,20 +568,13 @@ class DecodingPanel(QWidget):
                        f"RS({rs.n},{rs.k}) {good}/{len(results)} blocks OK.")
                 ok = good == len(results) if results else None
             elif t == FECType.LDPC:
-                n = self._ldpc_n.value() - (self._ldpc_n.value() % 2)
-                code = ldpc_from_H(make_regular_ldpc(n, 3, 6))
-                n_blocks = len(bits) // code.n
-                outs, conv = [], 0
-                for b in range(n_blocks):
-                    blk = bits[b * code.n:(b + 1) * code.n].astype(float)
-                    r = ldpc_decode(4.0 * (1 - 2 * blk), code, max_iter=self._ldpc_iter.value())
-                    outs.append(r.info_bits)
-                    conv += int(r.converged)
-                self._stages["decoded"] = (np.concatenate(outs) if outs
-                                           else np.zeros(0, dtype=np.uint8))
-                msg = (f"LDPC regular({code.n},{code.k}) demo code: {n_blocks} blocks, "
-                       f"{conv} converged. Real systems need their specific H matrix.")
-                ok = None
+                code = self._current_ldpc_code()
+                r = ldpc_decode_stream(bits, code, max_iter=self._ldpc_iter.value())
+                self._stages["decoded"] = r.info_bits
+                msg = (f"{code.describe()}: {r.blocks} blocks, {r.converged} converged "
+                       f"(mean {r.mean_iterations:.1f} iterations), {r.corrected_bits:,} "
+                       "channel bits corrected.")
+                ok = (r.converged == r.blocks) if r.blocks else None
             else:
                 msg, ok = "Unsupported.", False
             self._set_result(self._fec_result, msg, ok)
@@ -645,7 +666,7 @@ class DecodingPanel(QWidget):
             return
         if self._busy:
             return
-        worker = Worker(identify_fec, bits.copy())
+        worker = Worker(identify_fec, bits.copy(), ldpc_codes=list(self._ldpc_codes.values()))
         worker.signals.progress.connect(self._on_fec_progress)
         worker.signals.finished.connect(self._on_fec_detected)
         worker.signals.error.connect(self._on_fec_error)
@@ -668,13 +689,23 @@ class DecodingPanel(QWidget):
 
     def _on_fec_detected(self, result: FECIdentification) -> None:
         self._set_busy(False)
-        conv, rs = result.conv, result.rs
-        if conv is None and rs is None:
+        conv, rs, ldpc = result.conv, result.rs, result.ldpc
+        if conv is None and rs is None and ldpc is None:
             self._set_result(self._fec_result, result.summary(), None)
             return
         self._fec_offset.setValue(0)
         self._fec_invert.setChecked(False)
         self._rs_offset.setValue(0)
+        if ldpc is not None:
+            self._select_fec_type(FECType.LDPC)
+            name = self._add_ldpc_code(ldpc.code)
+            self._ldpc_code.setCurrentIndex(self._ldpc_code.findData(name))
+            self._fec_offset.setValue(ldpc.offset)
+            self._fec_invert.setChecked(ldpc.inverted)
+            self._apply_fec()
+            decoded = self._fec_result.text()
+            self._set_result(self._fec_result, f"✓ Detected: {result.summary()}\n{decoded}")
+            return
         if conv is not None:
             self._select_fec_type(FECType.CONCATENATED if rs else FECType.CONVOLUTIONAL)
             code = conv.code
@@ -698,6 +729,109 @@ class DecodingPanel(QWidget):
         self._apply_fec()
         decoded = self._fec_result.text()
         self._set_result(self._fec_result, f"✓ Detected: {result.summary()}\n{decoded}")
+
+    # ---- LDPC code management ------------------------------------------
+
+    def _add_ldpc_code(self, code: LDPCCode) -> str:
+        name = code.name or f"LDPC ({code.n_transmitted})"
+        if name not in self._ldpc_codes:
+            self._ldpc_codes[name] = code
+            self._ldpc_code.addItem(name, name)
+        return name
+
+    def _refresh_ldpc_codes(self) -> None:
+        from src.decoding.ldpc_library import load_installed
+
+        current = self._ldpc_code.currentData()
+        self._ldpc_code.blockSignals(True)
+        self._ldpc_code.clear()
+        self._ldpc_code.addItem("Regular (3,6) demo code", "__demo__")
+        for name in self._ldpc_codes:
+            self._ldpc_code.addItem(name, name)
+        for code in load_installed():
+            self._add_ldpc_code(code)
+        idx = self._ldpc_code.findData(current)
+        self._ldpc_code.setCurrentIndex(max(idx, 0))
+        self._ldpc_code.blockSignals(False)
+
+    def _current_ldpc_code(self) -> LDPCCode:
+        key = self._ldpc_code.currentData()
+        if key in self._ldpc_codes:
+            return self._ldpc_codes[key]
+        n = self._ldpc_n.value() - (self._ldpc_n.value() % 2)
+        return ldpc_from_H(make_regular_ldpc(n, 3, 6), name="Regular (3,6) demo")
+
+    def _load_ldpc_file(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, "Load LDPC parity-check matrix", "",
+                                              "LDPC matrices (*.alist *.qc);;All (*)")
+        if not path:
+            return
+        try:
+            code = load_ldpc(path)
+        except Exception as exc:  # noqa: BLE001
+            self._set_result(self._fec_result, f"✗ Could not load {Path(path).name}: {exc}", False)
+            return
+        name = self._add_ldpc_code(code)
+        self._ldpc_code.setCurrentIndex(self._ldpc_code.findData(name))
+        self._set_result(self._fec_result, f"✓ Loaded {code.describe()}")
+
+    def _download_ldpc_codes(self) -> None:
+        from src.decoding.ldpc_library import CATALOGUE, SOURCE_BASE, fetch, installed
+
+        have = {p.name for p in installed()}
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Standard LDPC codes")
+        lay = QVBoxLayout(dlg)
+        note = QLabel("Parity-check matrices are downloaded on request from the AFF3CT "
+                      f"project ({SOURCE_BASE.split('/dec/')[0]}) into ~/.sigma/ldpc.")
+        note.setWordWrap(True)
+        lay.addWidget(note)
+        lst = QListWidget()
+        for e in CATALOGUE:
+            item = QListWidgetItem(f"{e.name}   ({e.standard})")
+            item.setData(Qt.UserRole, e.name)
+            done = e.filename in have
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Checked if done else Qt.Unchecked)
+            if done:
+                item.setText(item.text() + "  ✓ installed")
+            lst.addItem(item)
+        lay.addWidget(lst)
+        box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        box.button(QDialogButtonBox.Ok).setText("Download selected")
+        box.accepted.connect(dlg.accept)
+        box.rejected.connect(dlg.reject)
+        lay.addWidget(box)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        wanted = [e for i, e in enumerate(CATALOGUE)
+                  if lst.item(i).checkState() == Qt.Checked and e.filename not in have]
+        if not wanted:
+            return
+
+        def _fetch_all(progress_cb, cancel_check):
+            failures = []
+            for i, e in enumerate(wanted):
+                progress_cb(i / len(wanted), f"Downloading {e.name}")
+                try:
+                    fetch(e)
+                except Exception as exc:  # noqa: BLE001
+                    failures.append(f"{e.name}: {exc}")
+            return failures
+
+        worker = Worker(_fetch_all)
+        worker.signals.progress.connect(self._on_fec_progress)
+        worker.signals.finished.connect(self._on_ldpc_downloaded)
+        worker.signals.error.connect(self._on_fec_error)
+        self._set_result(self._fec_result, f"Downloading {len(wanted)} code(s)…", None)
+        WorkerPool.instance().start(worker)
+
+    def _on_ldpc_downloaded(self, failures: list) -> None:
+        self._refresh_ldpc_codes()
+        if failures:
+            self._set_result(self._fec_result, "✗ " + "; ".join(failures), False)
+        else:
+            self._set_result(self._fec_result, "✓ Standard LDPC codes installed.")
 
     def _run_autocorrelation(self) -> None:
         bits = self.current_bits()

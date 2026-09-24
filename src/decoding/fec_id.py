@@ -24,6 +24,10 @@ Given a hard-decision bit stream of unknown origin, work out which FEC
   (chance: 1/256 per root), which reveals the alignment, the first
   consecutive root (fcr) and the number of parity symbols (n − k).
   The result is confirmed by actually decoding blocks.
+* **LDPC** – against a library of known codes (installed standard codes by
+  default, see :mod:`src.decoding.ldpc_library`): low-weight parity checks
+  are evaluated at every block alignment at once; the right code and
+  alignment satisfies nearly all of them, random data half.
 * **Unknown linear block codes** – GF(2) rank deficiency of the stream
   arranged into rows of length L reveals the code length / period and
   rate (needs a low-error stream).
@@ -965,6 +969,128 @@ def detect_linear_structure(
     return LinearStructure("convolutional-like", period, rate, deficiency)
 
 
+
+# ---------------------------------------------------------------------------
+# LDPC identification (against a library of known codes)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class LDPCCandidate:
+    code: object                # src.decoding.ldpc.LDPCCode
+    offset: int                 # skip this many bits so blocks start aligned
+    inverted: bool
+    satisfied: float            # fraction of tested checks satisfied at that alignment
+    z_score: float
+    blocks: int
+
+    def describe(self) -> str:
+        inv = ", stream inverted" if self.inverted else ""
+        return (f"LDPC {self.code.describe()}; blocks start at bit {self.offset}{inv}; "
+                f"{self.satisfied:.1%} of tested parity checks satisfied "
+                f"(random data: 50 %, z={self.z_score:.0f})")
+
+
+def _usable_checks(code, max_checks: int, budget: float = float("inf"),
+                   span: int = 1) -> list[np.ndarray]:
+    """Low-weight checks whose bits are all transmitted, as positions in the
+    transmitted block – as many as *budget* (≈ weight × span operations)
+    allows.  Odd-weight checks are interleaved in when the code has them:
+    only they reveal an inverted stream."""
+    if code.transmitted is not None:
+        tx_pos = np.cumsum(code.transmitted) - 1
+        ok_col = code.transmitted
+    else:
+        tx_pos = np.arange(code.n)
+        ok_col = np.ones(code.n, dtype=bool)
+    starts = np.append(code._row_starts, code.num_edges)
+    degree = np.diff(starts)
+    order = np.argsort(degree, kind="stable")
+    odd = [r for r in order if degree[r] % 2]
+    even = [r for r in order if degree[r] % 2 == 0]
+    mixed: list[int] = []
+    while odd or even:                     # ~1 odd check per 3 even ones
+        for _ in range(3):
+            if even:
+                mixed.append(even.pop(0))
+        if odd:
+            mixed.append(odd.pop(0))
+    candidates: list[np.ndarray] = []
+    by_punctured: dict[int, list[np.ndarray]] = {}
+    for r in mixed:
+        cols = code.cols[starts[r]: starts[r + 1]]
+        bad = cols[~ok_col[cols]]
+        if len(bad) == 0:
+            candidates.append(cols)
+        elif len(bad) == 1:
+            by_punctured.setdefault(int(bad[0]), []).append(cols)
+    # Punctured codes (e.g. AR4JA) may have no fully transmitted check: XOR
+    # two checks that share the same single punctured bit – it cancels
+    if len(candidates) < max_checks:
+        for group in by_punctured.values():
+            for a, b in zip(group[0::2], group[1::2], strict=False):
+                combo = np.setxor1d(a, b)
+                if len(combo) and np.all(ok_col[combo]):
+                    candidates.append(combo)
+    checks, cost = [], 0.0
+    for cols in candidates:
+        cost += len(cols) * span
+        if checks and cost > budget:
+            break
+        checks.append(tx_pos[cols])
+        if len(checks) >= max_checks:
+            break
+    return checks
+
+
+def score_ldpc_alignment(bits: np.ndarray, code, max_checks: int = 2000,
+                         max_blocks: int = 8, budget: float = 3e8) -> LDPCCandidate | None:
+    """Best block alignment of *code* in *bits* by parity-check satisfaction."""
+    x = np.asarray(bits, dtype=np.uint8).reshape(-1)
+    nt = code.n_transmitted
+    if len(x) < nt:
+        return None
+    n_off = min(nt, len(x) - nt + 1)
+    nb = max(1, min(max_blocks, (len(x) - n_off + 1) // nt))
+    span = (nb - 1) * nt + n_off                      # window starts needed
+    checks = _usable_checks(code, max_checks, budget, span)
+    if not checks:
+        return None
+    ok = np.zeros(n_off)
+    ok_inv = np.zeros(n_off)
+    for pos in checks:
+        s = np.zeros(span, dtype=np.uint8)
+        for p in pos:
+            s ^= x[p: p + span]
+        sat = 1.0 - s.astype(np.float64)
+        # Satisfaction at alignment o, summed over the blocks o, o+nt, …
+        folded = sat[:n_off].copy()
+        for b in range(1, nb):
+            folded += sat[b * nt: b * nt + n_off]
+        ok += folded
+        ok_inv += folded if len(pos) % 2 == 0 else (nb - folded)
+    samples = len(checks) * nb
+    best_normal, best_inv = int(np.argmax(ok)), int(np.argmax(ok_inv))
+    inverted = ok_inv[best_inv] > ok[best_normal]
+    o = best_inv if inverted else best_normal
+    rate = float((ok_inv if inverted else ok)[o] / samples)
+    z = (rate - 0.5) * 2.0 * math.sqrt(samples) - math.sqrt(2 * math.log(max(n_off, 2)))
+    return LDPCCandidate(code, o, bool(inverted), rate, z, nb)
+
+
+def identify_ldpc(bits: np.ndarray, codes: list, z_threshold: float = 6.0,
+                  cancel_check: CancelCheck | None = None) -> LDPCCandidate | None:
+    best: LDPCCandidate | None = None
+    for code in codes:
+        if cancel_check and cancel_check():
+            break
+        cand = score_ldpc_alignment(bits, code)
+        if cand is not None and cand.z_score >= z_threshold and \
+                (best is None or cand.z_score > best.z_score):
+            best = cand
+    return best
+
+
 # ---------------------------------------------------------------------------
 # Top level
 # ---------------------------------------------------------------------------
@@ -976,6 +1102,7 @@ class FECIdentification:
     conv: ConvCandidate | None = None
     conv_candidates: list[ConvCandidate] = field(default_factory=list)
     rs: RSCandidate | None = None
+    ldpc: LDPCCandidate | None = None
     structure: LinearStructure | None = None
     notes: list[str] = field(default_factory=list)
 
@@ -988,7 +1115,9 @@ class FECIdentification:
             lines.append(prefix + self.conv.describe())
         if self.rs:
             lines.append(("Outer RS (after Viterbi): " if self.conv else "") + self.rs.describe())
-        if self.structure and not (self.conv or self.rs):
+        if self.ldpc:
+            lines.append(self.ldpc.describe())
+        if self.structure and not (self.conv or self.rs or self.ldpc):
             lines.append(self.structure.describe())
         if not lines:
             lines.append("No FEC structure detected (uncoded, unsupported code, "
@@ -1008,6 +1137,7 @@ def identify_fec(
     try_structure: bool = True,
     max_bits: int = 60_000,
     rs_inner_bits: int = 24_000,
+    ldpc_codes: list | None = None,
     progress_cb: ProgressCallback | None = None,
     cancel_check: CancelCheck | None = None,
     **_: object,
@@ -1065,7 +1195,24 @@ def identify_fec(
             result.fec_type = FECType.REED_SOLOMON
             return result
 
-    # 4 · Any linear structure
+    # 4 · LDPC codes from the library (installed standard codes by default)
+    if not cancelled():
+        codes = ldpc_codes
+        if codes is None:
+            from src.decoding.ldpc_library import load_installed
+
+            codes = load_installed()
+        if codes:
+            if progress_cb:
+                progress_cb(0.8, f"Checking {len(codes)} LDPC code(s)")
+            cand = identify_ldpc(np.asarray(bits, dtype=np.uint8).reshape(-1), codes,
+                                 cancel_check=cancel_check)
+            if cand is not None:
+                result.ldpc = cand
+                result.fec_type = FECType.LDPC
+                return result
+
+    # 5 · Any linear structure
     if try_structure and not cancelled():
         if progress_cb:
             progress_cb(0.85, "Rank analysis for unknown linear codes")
