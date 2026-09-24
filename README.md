@@ -33,7 +33,8 @@ src/
 ├── decoding/
 │   ├── viterbi.py         # Convolutional codes (K=3..9 presets, puncturing, soft/hard)
 │   ├── reed_solomon.py    # RS(n,k) over GF(2^8), configurable field, shortened codes
-│   ├── ldpc.py            # Regular LDPC, min-sum decoder (experimental)
+│   ├── ldpc.py            # Sparse LDPC codec: .alist/.qc, IRA/dense encoders, min-sum
+│   ├── ldpc_library.py    # Standard-code catalogue, download on request
 │   ├── interleaving.py    # Block, convolutional, diagonal, pseudo-random
 │   ├── fec_id.py          # Blind FEC identification (conv library/blind, RS, rank)
 │   ├── interleaver_id.py  # Blind interleaver identification (type, size, alignment)
@@ -66,8 +67,15 @@ src/
   - **DBPSK and π/4-DQPSK:** differential detection, with no phase ambiguity.
   - Digital demodulators produce symbols (constellation view), hard bits and EVM.
   - **AM, FM, SSB:** envelope, discriminator and product detectors produce audio at 8 kHz, with the modulation index, peak deviation or inferred SSB carrier reported. Save it via *File → Save Demodulated Audio…*.
-- **Decoding Workbench**: De-interleave (block, convolutional, diagonal, pseudo-random), FEC decode (Viterbi with standard/custom polynomials and puncturing, Reed-Solomon with configurable field parameters, concatenated RS+conv, experimental LDPC), then bit-stream correlation: autocorrelation for frame period, sync-word search with error tolerance and inversion detection, header/payload framing, and bit export.
+- **Decoding Workbench**: De-interleave (block, convolutional, diagonal, pseudo-random), FEC decode (Viterbi with standard/custom polynomials and puncturing, Reed-Solomon with configurable field parameters, concatenated RS+conv, LDPC), then bit-stream correlation: autocorrelation for frame period, sync-word search with error tolerance and inversion detection, header/payload framing, and bit export.
 - **Blind FEC Identification** (🔍 *Auto-detect* in the decoding workbench): convolutional codes are identified from the parity checks of their dual code. The library covers K = 3…9, rate 1/2 and 1/3, every generator order, and the DVB/802.11 puncture patterns 2/3–7/8. Detection works at several percent BER and reports the code phase, bit inversion and channel BER. Unknown rate-1/n codes have their generators recovered blindly. Reed-Solomon codes are identified by n, k, field polynomial, first root and exact alignment, even when every block contains symbol errors. Concatenated RS + convolutional chains are found by decoding the inner code first. Unknown binary block codes (e.g. Hamming) are reported by length and rate.
+- **LDPC at real sizes**:
+  - Sparse parity-check matrices loaded from `.alist` or quasi-cyclic `.qc` files, including punctured and rank-deficient codes.
+  - Linear-time encoding for IRA / dual-diagonal codes (DVB-S2); packed-bit elimination for everything else.
+  - Batched, vectorised normalised min-sum decoding. A 64 800-bit DVB-S2 frame decodes in ≈ 0.2 s.
+  - A catalogue of standard codes is downloaded on request into `~/.sigma/ldpc/` from the decoding panel or with `python -m src.decoding.ldpc_library fetch …`. It covers DVB-S2 (5 rates), Wi-Fi 802.11n, WiMAX, WRAN, 10GBASE-T, CCSDS, CCSDS AR4JA, and 5G NR BG1/BG2.
+  - Verified end to end on those matrices: encoded words satisfy H·c = 0, and decode error-free at their normal operating points (e.g. DVB-S2 r1/2 at Eb/N0 = 1.5 dB, 10GBASE-T at 4 dB).
+  - Blind identification tries every alignment against the installed codes, including inverted streams.
 - **Blind Interleaver Identification**: block, diagonal and convolutional interleavers are found by a stride scan over the whole code library. Short-column block and short-branch convolutional interleavers use a comb search. Pseudo-random (LCG/NumPy) interleavers use a seed search. Each result gives the dimensions and the exact bit alignment, verified by restoring the code structure.
 - **Synthetic Signal Generation**: Built-in generators for BPSK, QPSK, 16-QAM, and 2-FSK signals, with channel impairment models (AWGN, frequency offsets, IQ imbalances, phase noise) for testing and validation.
 
@@ -180,7 +188,9 @@ At 4 dB the model fixes the rules' weak cases: 64-QAM 60 → 95 %, 4-ASK 30 → 
 ## Limitations & Next Steps
 
 - Region detection is frequency-only; bursty signals are treated as continuous.
-- LDPC supports only a regular demo code; real systems need their specific parity-check matrix.
+- Standard LDPC matrices are not bundled (the published source carries no licence); they are downloaded on request.
+- 5G NR rate matching (bit selection, filler bits) is not modelled: the base-graph code is used as is.
+- LDPC codes in which *every* check involves a punctured bit (CCSDS AR4JA) decode normally but cannot be identified blindly.
 - Interleaver identification needs a convolutional code inside the interleaver. Punctured codes whose parity checks are longer than the interleaver runs are only found when the code is selected under FEC first. Diagonal interleavers need columns longer than the code's check span. Pseudo-random identification searches seeds 0…N−1 for the block sizes you give it.
 - Reed-Solomon identification assumes GF(2⁸), generator α (fcr 0 or 1), ≥ 6 parity symbols and no CCSDS dual-basis mapping. Rank-based block-code detection needs a near error-free stream.
 - The absolute sample rate of a headerless file cannot be recovered; only consistent candidates are offered.

@@ -45,3 +45,30 @@ def test_auto_detect_chain(qtbot):
     m = min(len(decoded), len(data) - start) - 300
     assert np.mean(decoded[300:m] != data[start + 300:start + m]) < 1e-3
     assert "Detected" in panel._fec_result.text()
+
+
+def test_auto_detect_ldpc(qtbot):
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).parent))
+    from test_ldpc import ira_code
+
+    from src.decoding.ldpc import ldpc_encode
+
+    rng = np.random.default_rng(9)
+    code = ira_code()
+    infos = [rng.integers(0, 2, code.k).astype(np.uint8) for _ in range(6)]
+    stream = np.concatenate([ldpc_encode(i, code) for i in infos])[1234:]
+    stream ^= (rng.random(len(stream)) < 0.01).astype(np.uint8)
+
+    panel = DecodingPanel()
+    qtbot.addWidget(panel)
+    panel._add_ldpc_code(code)
+    panel.set_bits(stream, "ldpc test")
+    panel._auto_detect_fec()
+    qtbot.waitUntil(lambda: not panel._busy, timeout=180_000)
+    assert panel._fec_type.currentData() == FECType.LDPC
+    assert panel._fec_offset.value() == 2000 - 1234
+    decoded = panel._stages["decoded"]
+    assert np.array_equal(decoded, np.concatenate(infos[1:]))
