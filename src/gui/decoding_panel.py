@@ -25,7 +25,7 @@ from pathlib import Path
 
 import numpy as np
 import pyqtgraph as pg
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -50,7 +50,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from src.core.enums import FECType, InterleaverType
+from src.core.enums import FECType, InterleaverType, ModulationType
+from src.decoding.auto_decode import AutoDecodeResult, auto_decode
 from src.decoding.correlation import (
     bit_autocorrelation,
     bits_to_hex,
@@ -60,7 +61,11 @@ from src.decoding.correlation import (
     split_frames,
 )
 from src.decoding.fec_id import ConvHypothesis, FECIdentification, identify_fec
-from src.decoding.interleaver_id import InterleaverIdentification, identify_interleaver
+from src.decoding.interleaver_id import (
+    InterleaverCandidate,
+    InterleaverIdentification,
+    identify_interleaver,
+)
 from src.decoding.interleaving import InterleaverSpec, deinterleave
 from src.decoding.ldpc import (
     LDPCCode,
@@ -94,11 +99,17 @@ def _small(label: QLabel, color: str = TEXT_SECONDARY) -> None:
 class DecodingPanel(QWidget):
     """Bit-stream de-interleaving, FEC decoding, and correlation."""
 
+    auto_decode_finished = Signal(object)      # AutoDecodeResult
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._stages: dict[str, np.ndarray] = {}
         self._source_label = ""
         self._busy = False
+        self._bits_per_symbol = 1
+        self._modulation: ModulationType | None = None
+        self._auto_worker: Worker | None = None
+        self.last_auto_result: AutoDecodeResult | None = None
         self._setup_ui()
         self._refresh_view_combo()
 
@@ -111,6 +122,17 @@ class DecodingPanel(QWidget):
         root.setContentsMargins(6, 6, 6, 6)
 
         header = QHBoxLayout()
+        self._auto_btn = QPushButton("⚡ Auto-decode")
+        self._auto_btn.setToolTip(
+            "One click: resolve the bit mapping, find the interleaver and FEC, decode, then "
+            "find the frame sync word and header. Every step is filled in below and can be "
+            "adjusted and re-applied by hand.")
+        self._auto_btn.clicked.connect(self.run_auto_decode)
+        header.addWidget(self._auto_btn)
+        self._auto_cancel_btn = QPushButton("Cancel")
+        self._auto_cancel_btn.setVisible(False)
+        self._auto_cancel_btn.clicked.connect(self._cancel_auto_decode)
+        header.addWidget(self._auto_cancel_btn)
         self._status = QLabel("No bits loaded — run analysis on a recording first.")
         self._status.setProperty("role", "subtitle")
         header.addWidget(self._status)
@@ -136,6 +158,11 @@ class DecodingPanel(QWidget):
         controls = QWidget()
         cl = QVBoxLayout(controls)
         cl.setSpacing(8)
+        self._auto_result = QLabel("")
+        self._auto_result.setWordWrap(True)
+        self._auto_result.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        _small(self._auto_result)
+        cl.addWidget(self._auto_result)
         cl.addWidget(self._build_deinterleave_group())
         cl.addWidget(self._build_fec_group())
         cl.addWidget(self._build_correlation_group())
@@ -415,11 +442,20 @@ class DecodingPanel(QWidget):
     # Data
     # ==================================================================
 
-    def set_bits(self, bits: np.ndarray, source: str = "") -> None:
-        """Load a fresh raw bit stream (clears derived stages)."""
+    def set_bits(self, bits: np.ndarray, source: str = "", bits_per_symbol: int = 1,
+                 modulation: ModulationType | None = None) -> None:
+        """Load a fresh raw bit stream (clears derived stages).
+
+        *bits_per_symbol* and *modulation* let auto-decode resolve the
+        demodulator's bit-mapping ambiguity.
+        """
         self._stages = {"raw": np.asarray(bits, dtype=np.uint8).reshape(-1)}
         self._source_label = source
-        for lbl in (self._il_result, self._fec_result, self._sync_result, self._period_label):
+        self._bits_per_symbol = bits_per_symbol
+        self._modulation = modulation
+        self.last_auto_result = None
+        for lbl in (self._il_result, self._fec_result, self._sync_result, self._period_label,
+                    self._auto_result):
             lbl.setText("")
         self._frames_table.setRowCount(0)
         self._ac_curve.setData([], [])
@@ -589,6 +625,7 @@ class DecodingPanel(QWidget):
         self._busy = busy
         self._il_auto_btn.setEnabled(not busy)
         self._fec_auto_btn.setEnabled(not busy)
+        self._auto_btn.setEnabled(not busy)
 
     def _selected_conv_hypothesis(self) -> ConvHypothesis | None:
         """The convolutional code currently configured under FEC, if any."""
@@ -642,6 +679,12 @@ class DecodingPanel(QWidget):
         if best is None:
             self._set_result(self._il_result, result.summary(), None)
             return
+        self._fill_interleaver_controls(best)
+        self._apply_deinterleave()
+        applied = self._il_result.text()
+        self._set_result(self._il_result, f"✓ Detected: {result.summary()}\n{applied}")
+
+    def _fill_interleaver_controls(self, best: InterleaverCandidate) -> None:
         spec = best.spec
         for i in range(self._il_type.count()):
             if self._il_type.itemData(i) == spec.kind:
@@ -655,9 +698,6 @@ class DecodingPanel(QWidget):
         self._il_seed.setValue(spec.seed)
         self._il_gen.setCurrentText(spec.generator)
         self._il_offset.setValue(best.offset)
-        self._apply_deinterleave()
-        applied = self._il_result.text()
-        self._set_result(self._il_result, f"✓ Detected: {result.summary()}\n{applied}")
 
     def _auto_detect_fec(self) -> None:
         bits = self._input_for_fec()
@@ -689,10 +729,18 @@ class DecodingPanel(QWidget):
 
     def _on_fec_detected(self, result: FECIdentification) -> None:
         self._set_busy(False)
-        conv, rs, ldpc = result.conv, result.rs, result.ldpc
-        if conv is None and rs is None and ldpc is None:
+        if not self._fill_fec_controls(result):
             self._set_result(self._fec_result, result.summary(), None)
             return
+        self._apply_fec()
+        decoded = self._fec_result.text()
+        self._set_result(self._fec_result, f"✓ Detected: {result.summary()}\n{decoded}")
+
+    def _fill_fec_controls(self, result: FECIdentification) -> bool:
+        """Set the FEC controls to an identified code; False if there is none."""
+        conv, rs, ldpc = result.conv, result.rs, result.ldpc
+        if conv is None and rs is None and ldpc is None:
+            return False
         self._fec_offset.setValue(0)
         self._fec_invert.setChecked(False)
         self._rs_offset.setValue(0)
@@ -702,10 +750,7 @@ class DecodingPanel(QWidget):
             self._ldpc_code.setCurrentIndex(self._ldpc_code.findData(name))
             self._fec_offset.setValue(ldpc.offset)
             self._fec_invert.setChecked(ldpc.inverted)
-            self._apply_fec()
-            decoded = self._fec_result.text()
-            self._set_result(self._fec_result, f"✓ Detected: {result.summary()}\n{decoded}")
-            return
+            return True
         if conv is not None:
             self._select_fec_type(FECType.CONCATENATED if rs else FECType.CONVOLUTIONAL)
             code = conv.code
@@ -726,9 +771,7 @@ class DecodingPanel(QWidget):
             self._rs_fcr.setValue(rs.fcr)
             self._rs_gen.setValue(1)
             self._rs_offset.setValue(rs.bit_offset)
-        self._apply_fec()
-        decoded = self._fec_result.text()
-        self._set_result(self._fec_result, f"✓ Detected: {result.summary()}\n{decoded}")
+        return True
 
     # ---- LDPC code management ------------------------------------------
 
@@ -877,6 +920,9 @@ class DecodingPanel(QWidget):
 
         frame_len = self._frame_bits.value() or None
         frames = split_frames(bits, res, header_bits=self._hdr_bits.value(), frame_bits=frame_len)
+        self._fill_frames_table(frames)
+
+    def _fill_frames_table(self, frames: list) -> None:
         self._frames_table.setRowCount(min(len(frames), 500))
         for i, f in enumerate(frames[:500]):
             self._frames_table.setItem(i, 0, QTableWidgetItem(str(f.start)))
@@ -884,6 +930,107 @@ class DecodingPanel(QWidget):
             self._frames_table.setItem(i, 2, QTableWidgetItem(bits_to_hex(f.header)))
             self._frames_table.setItem(i, 3, QTableWidgetItem(bits_to_hex(f.payload[:256])))
         self._frames_table.resizeColumnsToContents()
+
+    # ---- One-click auto-decode ------------------------------------------
+
+    @property
+    def auto_decode_running(self) -> bool:
+        return self._auto_worker is not None
+
+    def run_auto_decode(self) -> None:
+        """Mapping → interleaver → FEC → decode → framing in a background worker."""
+        raw = self._stages.get("raw")
+        if raw is None or len(raw) == 0:
+            self._set_result(self._auto_result, "No bits loaded.", None)
+            return
+        if self._busy:
+            return
+        try:
+            text = self._il_pr_blocks.text().replace(" ", "")
+            blocks = tuple(int(v) for v in text.split(",") if v)
+        except ValueError:
+            blocks = ()
+        worker = Worker(auto_decode, raw.copy(), self._bits_per_symbol, self._modulation,
+                        ldpc_codes=list(self._ldpc_codes.values()),
+                        pseudo_random_blocks=blocks)
+        worker.signals.progress.connect(self._on_auto_progress)
+        worker.signals.finished.connect(self._on_auto_decoded)
+        worker.signals.error.connect(self._on_auto_error)
+        worker.signals.cancelled.connect(self._on_auto_cancelled)
+        self._auto_worker = worker
+        self._set_busy(True)
+        self._auto_cancel_btn.setVisible(True)
+        self._set_result(self._auto_result, "Auto-decoding…", None)
+        WorkerPool.instance().start(worker)
+
+    def _cancel_auto_decode(self) -> None:
+        if self._auto_worker is not None:
+            self._auto_worker.cancel()
+
+    def _auto_done(self) -> None:
+        self._auto_worker = None
+        self._set_busy(False)
+        self._auto_cancel_btn.setVisible(False)
+
+    def _on_auto_progress(self, fraction: float, message: str) -> None:
+        self._set_result(self._auto_result, f"Auto-decoding… {fraction:.0%} · {message}", None)
+
+    def _on_auto_error(self, message: str) -> None:
+        self._auto_done()
+        self._set_result(self._auto_result, f"✗ Auto-decode failed: {message}", False)
+
+    def _on_auto_cancelled(self) -> None:
+        self._auto_done()
+        self._set_result(self._auto_result, "Auto-decode cancelled.", None)
+
+    def _on_auto_decoded(self, res: AutoDecodeResult) -> None:
+        self._auto_done()
+        self.apply_auto_result(res)
+        self.auto_decode_finished.emit(res)
+
+    def apply_auto_result(self, res: AutoDecodeResult) -> None:
+        """Show a chain result: stages, filled-in controls and frames."""
+        self.last_auto_result = res
+        self._stages = {k: v for k, v in res.stages.items() if k in _STAGES}
+
+        il = res.step("Interleaver")
+        if res.interleaver is not None and res.interleaver.best is not None:
+            self._fill_interleaver_controls(res.interleaver.best)
+        elif il is not None and il.status != "found":
+            self._il_type.setCurrentIndex(0)
+        if il is not None:
+            self._set_result(self._il_result, f"{il.icon} {il.detail}",
+                             True if il.status == "found" else None)
+
+        fec_step, dec_step = res.step("FEC"), res.step("Decode")
+        if res.fec is not None and self._fill_fec_controls(res.fec):
+            text = res.fec.summary() + (f"\n{dec_step.detail}" if dec_step else "")
+            self._set_result(self._fec_result, f"✓ {text}", res.decode_ok)
+        elif fec_step is not None:
+            self._select_fec_type(FECType.NONE)
+            self._set_result(self._fec_result, f"{fec_step.icon} {fec_step.detail}", None)
+
+        fr = res.framing
+        if fr.found and fr.sync is not None:
+            self._sync_edit.setText(fr.sync_hex)
+            self._hdr_bits.setValue(max(0, fr.header_bits - len(fr.sync_bits)))
+            self._frame_bits.setValue(fr.period if fr.regular and fr.period else 0)
+            if len(fr.sync.correlation):
+                self._ac_curve.setData(np.arange(len(fr.sync.correlation)), fr.sync.correlation)
+                self._ac_plot.setTitle(f"Sync-word correlation ({res.framing_stage} bits)")
+            self._fill_frames_table(fr.frames)
+            self._set_result(self._sync_result, "✓ " + fr.summary().replace("\n", "\n   "))
+        else:
+            self._frames_table.setRowCount(0)
+            self._set_result(self._sync_result, fr.summary(), None)
+
+        self._refresh_view_combo()
+        if res.framing_stage in self._stages:
+            self._view_combo.setCurrentText(res.framing_stage)
+        self._update_status()
+        ok = res.framing.found or res.decode_ok
+        self._set_result(self._auto_result, "⚡ Auto-decode\n" + res.summary(),
+                         True if ok else None)
 
     def _save_bits(self) -> None:
         bits = self.current_bits()
