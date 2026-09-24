@@ -14,6 +14,7 @@ evidence behind every number.
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -30,9 +31,10 @@ from src.core.models import (
     RecordingMetadata,
     SignalRegion,
 )
+from src.dsp.bursts import Burst, BurstConfig, BurstDetection, detect_bursts, extract_burst
 from src.dsp.classification import ClassificationResult, classify_modulation
 from src.dsp.demod import ANALOG_MODULATIONS, DemodResult, demodulate
-from src.dsp.detection import DetectionConfig, detect_signal_regions
+from src.dsp.detection import DetectionConfig
 from src.dsp.measurements import (
     estimate_frequency_offset,
     estimate_snr_inband,
@@ -111,6 +113,29 @@ class PipelineConfig:
 
     detection_config: DetectionConfig = field(default_factory=DetectionConfig)
 
+    # Bursts / several signals: detected on the spectrogram; if the
+    # recording is intermittent each burst is extracted (own band, own
+    # time span) and analysed on its own, the strongest giving the main result
+    burst_config: BurstConfig = field(default_factory=BurstConfig)
+    analyze_bursts: bool = True
+    max_burst_analyses: int = 16
+
+
+@dataclass
+class BurstAnalysis:
+    """One detected burst and the full analysis of it on its own."""
+
+    index: int                  # position in ``PipelineResult.regions``
+    burst: Burst
+    region: SignalRegion
+    result: PipelineResult      # analysis of the extracted burst
+    offset_hz: float            # the burst was moved down by this much
+    start_sample: int           # of the extracted segment, in the recording
+
+    @property
+    def modulation(self) -> ModulationType:
+        return self.result.analysis.modulation
+
 
 @dataclass
 class PipelineResult:
@@ -135,6 +160,9 @@ class PipelineResult:
     classifier_source: str = "rules"       # which classifier made the final call
     demod: DemodResult | None = None
     stage_errors: dict[str, str] = field(default_factory=dict)
+    burst_detection: BurstDetection | None = None
+    bursts: list[BurstAnalysis] = field(default_factory=list)
+    primary_burst: int | None = None        # index into ``bursts`` shown as the main result
 
 
 class AnalysisPipeline:
@@ -196,14 +224,19 @@ class AnalysisPipeline:
         if cfg.detect_regions:
             self._emit_progress(0.25, "Detecting signal regions...")
             try:
-                result.regions = detect_signal_regions(processed, fs, cfg.detection_config)
-                for r in result.regions:
-                    r.recording_id = metadata.recording_id
-                    r.start_time_sec = r.start_sample / fs
-                    r.end_time_sec = r.end_sample / fs
-                    r.center_frequency_hz = metadata.center_frequency_hz
+                det = detect_bursts(processed, fs, cfg.burst_config)
+                result.burst_detection = det
+                result.regions = [b.to_region(fs, metadata.center_frequency_hz,
+                                              metadata.recording_id) for b in det.bursts]
             except Exception as exc:  # noqa: BLE001
                 result.stage_errors["detection"] = str(exc)
+            det = result.burst_detection
+            if cfg.analyze_bursts and det is not None and det.intermittent:
+                self._analyze_bursts(processed, metadata, fs, result)
+                analysis.overall_confidence = self._overall_confidence(result)
+                self._emit_progress(1.0, "Analysis complete.")
+                result.processing_time_ms = (time.perf_counter() - start_time) * 1000.0
+                return result
 
         # 3. Measurements
         self._emit_progress(0.35, "Measuring signal parameters...")
@@ -337,6 +370,76 @@ class AnalysisPipeline:
         return result
 
     # ------------------------------------------------------------------
+
+    def _analyze_bursts(self, x: np.ndarray, metadata: RecordingMetadata, fs: float,
+                        result: PipelineResult) -> None:
+        """Analyse each detected burst on its own; the strongest becomes the
+        main result."""
+        cfg = self.config
+        det = result.burst_detection
+        assert det is not None
+        strength = [b.num_samples * 10 ** (b.snr_db / 10) for b in det.bursts]
+        order = sorted(range(len(det.bursts)), key=lambda i: strength[i], reverse=True)
+        order = order[: cfg.max_burst_analyses]
+        # The extracted burst sits at 0 Hz: DC removal would delete a carrier
+        # (OOK, AM); receiver DC was already removed from the whole recording
+        sub_cfg = dataclasses.replace(cfg, detect_regions=False, analyze_bursts=False,
+                                      remove_dc=False)
+        for rank, i in enumerate(order):
+            b = det.bursts[i]
+            self._emit_progress(0.3 + 0.65 * rank / len(order),
+                                f"Analysing burst {rank + 1}/{len(order)} "
+                                f"({b.duration(fs) * 1e3:,.0f} ms at {b.center_hz:+,.0f} Hz)")
+            ex = extract_burst(x, fs, b)
+            if len(ex.samples) < 1024:
+                continue
+            sub_meta = metadata.model_copy(update={
+                "sample_rate_hz": ex.sample_rate,
+                "center_frequency_hz": metadata.center_frequency_hz + ex.offset_hz,
+                "sample_count": len(ex.samples),
+            })
+            try:
+                sub = AnalysisPipeline(sub_cfg).run(ex.samples, sub_meta)
+            except SigmaError as exc:
+                result.stage_errors[f"burst {i + 1}"] = str(exc)
+                continue
+            region = result.regions[i]
+            region.label = sub.analysis.modulation.value
+            result.bursts.append(BurstAnalysis(i, b, region, sub, ex.offset_hz, ex.start_sample))
+        if not result.bursts:
+            return
+        # Main result: the strongest burst that was analysed
+        primary = result.bursts[0]
+        result.bursts.sort(key=lambda a: a.index)
+        result.primary_burst = result.bursts.index(primary)
+        self.adopt_burst(result, primary)
+        n = len(det.bursts)
+        kinds = sorted({a.modulation.value for a in result.bursts})
+        result.analysis.warnings.insert(
+            0, f"{n} burst(s)/signal(s) detected (active {det.duty_cycle:.0%} of the time; "
+               f"{', '.join(kinds)}). Showing burst {primary.index + 1} "
+               f"({primary.region.start_time_sec:.3f}–{primary.region.end_time_sec:.3f} s, "
+               f"{primary.offset_hz:+,.0f} Hz); pick a region to see another.")
+
+    @staticmethod
+    def adopt_burst(result: PipelineResult, burst: BurstAnalysis) -> None:
+        """Make *burst*'s analysis the main result (frequencies back in the
+        recording's frame).  Regions, bursts and the spectral overview stay."""
+        sub = burst.result
+        result.analysis = sub.analysis.model_copy(deep=True)
+        result.classification = sub.classification
+        result.model_prediction = sub.model_prediction
+        result.classifier_source = sub.classifier_source
+        result.demod = sub.demod
+        result.snr_db = sub.snr_db
+        result.snr_inband_db = sub.snr_inband_db
+        result.occupied_bandwidth_hz = sub.occupied_bandwidth_hz
+        result.symbol_rate_candidates = sub.symbol_rate_candidates
+        result.frequency_offset_hz = sub.frequency_offset_hz + burst.offset_hz
+        for stage, err in sub.stage_errors.items():
+            result.stage_errors[f"burst {burst.index + 1} {stage}"] = err
+        if burst in result.bursts:
+            result.primary_burst = result.bursts.index(burst)
 
     def _classify(self, heavy: np.ndarray, fs: float, symbol_rate: float,
                   result: PipelineResult) -> tuple[ModulationType, float]:

@@ -40,6 +40,7 @@ class WaterfallViewer(QWidget):
         super().__init__(parent)
         self._samples: np.ndarray | None = None
         self._sample_rate: float = 1.0
+        self._region_items: list = []
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -108,7 +109,35 @@ class WaterfallViewer(QWidget):
         """Load new sample data."""
         self._samples = samples
         self._sample_rate = sample_rate
+        self.set_regions([])
         self._update_plot()
+
+    def set_regions(self, regions: list[tuple[float, float, float, float, str, bool]]) -> None:
+        """Outline detected bursts: ``(t0, t1, f_lo, f_hi, label, highlighted)``
+        with frequencies relative to the recording centre."""
+        from pyqtgraph.Qt import QtCore, QtWidgets
+
+        for item in self._region_items:
+            self._plot_widget.removeItem(item)
+        self._region_items = []
+        for t0, t1, f_lo, f_hi, label, highlighted in regions:
+            rect = QtWidgets.QGraphicsRectItem(QtCore.QRectF(t0, f_lo, t1 - t0, f_hi - f_lo))
+            pen = pg.mkPen("#ffcc00" if highlighted else "#ffffff",
+                           width=2 if highlighted else 1, style=QtCore.Qt.DashLine)
+            pen.setCosmetic(True)
+            rect.setPen(pen)
+            rect.setZValue(10)
+            self._plot_widget.addItem(rect)
+            text = pg.TextItem(label, color="#ffcc00" if highlighted else "#ffffff",
+                               anchor=(0, 1))
+            text.setPos(t0, f_hi)
+            text.setZValue(11)
+            self._plot_widget.addItem(text)
+            self._region_items += [rect, text]
+
+    @property
+    def region_count(self) -> int:
+        return len(self._region_items) // 2
 
     # ------------------------------------------------------------------
     # Internals

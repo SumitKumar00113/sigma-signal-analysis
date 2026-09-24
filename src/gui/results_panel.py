@@ -220,7 +220,14 @@ class ResultsPanel(QWidget):
         self._rows["Occupied BW"].set_value(_format_hz(res.occupied_bandwidth_hz))
         fs = res.metadata.sample_rate_hz
         self._rows["Samples / Symbol"].set_value(f"{fs / rs:.2f}" if rs > 0 and fs > 0 else "—")
-        self._rows["Regions"].set_value(str(len(res.regions)))
+        det = res.burst_detection
+        if det is not None and res.bursts:
+            shown = (res.bursts[res.primary_burst].index + 1
+                     if res.primary_burst is not None else "—")
+            self._rows["Regions"].set_value(
+                f"{len(res.regions)} bursts, active {det.duty_cycle:.0%} (showing #{shown})")
+        else:
+            self._rows["Regions"].set_value(str(len(res.regions)))
 
         d = res.demod
         if d is not None:

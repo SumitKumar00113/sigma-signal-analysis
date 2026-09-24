@@ -484,6 +484,25 @@ def classify_modulation(
         # BPSK family: a squared-signal line.  (A real-valued BPSK symbol
         # stream also "fits" QPSK at any rate, so skip the QPSK checks.)
         carrier = fc2
+        # Short bursts: random peaks of the data spectrum can beat the
+        # symbol-rate line.  Keep the candidate whose symbols have the most
+        # constant magnitude: at the right rate and timing raised-cosine BPSK
+        # has no inter-symbol interference (±A); elsewhere samples land at
+        # random points of the pulses.  (|E[s²]| cannot tell: de-rotated
+        # BPSK is real-valued at any sampling instant.)
+        rates = [symbol_rate] + [r for r, _ in (rate_candidates or [])[:4]]
+        scores: dict[float, float] = {}
+        for r in dict.fromkeys(round(v, 1) for v in rates if v > 0):
+            syms = _linear_symbols(samples, sample_rate, r, carrier)
+            if len(syms) >= 64:
+                p = np.abs(syms) ** 2
+                scores[r] = float(1.0 - np.std(p) / (np.mean(p) + 1e-12))
+        if scores:
+            best_rate = max(scores, key=scores.get)
+            base = scores.get(round(symbol_rate, 1), 0.0)
+            feats["bpsk_fit"] = scores[best_rate]
+            if best_rate != round(symbol_rate, 1) and scores[best_rate] > base + 0.15:
+                refined_rate = symbol_rate = best_rate
     elif line4:
         # The 4th-power line pins the carrier of the QPSK family exactly
         carrier = mpower_carrier(band, sample_rate, 4)[0]
