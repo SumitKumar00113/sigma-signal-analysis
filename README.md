@@ -19,8 +19,9 @@ src/
 │   ├── detection.py       # Spectral-peak region detection
 │   ├── measurements.py    # SNR (PSD), carrier offset, symbol rate (envelope + inst-freq)
 │   ├── sync.py            # RRC matched filter, Gardner timing, M-power CFO, Costas loop
-│   ├── classification.py  # Feature/cumulant modulation classifier
-│   ├── demod.py           # PSK / QAM / FSK demodulators → symbols + bits
+│   ├── classification.py  # Explainable modulation classifier (18 types)
+│   ├── demod.py           # PSK/QAM/FSK/MSK/GMSK/ASK/OQPSK/DPSK demodulators → bits
+│   ├── analog.py          # AM / FM / SSB demodulators → audio
 │   ├── rate_inference.py  # Sample-rate candidates for headerless files
 │   └── pipeline.py        # validate → detect → measure → classify → demodulate
 ├── decoding/
@@ -45,8 +46,19 @@ src/
 - **Interactive GUI**: Built on **PySide6** and **PyQtGraph**. Dark-themed UI with `QThreadPool` worker architecture to prevent UI freezing during intensive DSP tasks.
 - **Analysis Pipeline**: Orchestrated processing chain (validate → preprocess → detect → measure → report) with full provenance tracking.
 - **Parameter Estimation**: PSD-based SNR (full-band and in-band), carrier-offset centroid, symbol rate from envelope and instantaneous-frequency line spectra (PSK/QAM and FSK), occupied bandwidth. For headerless raw IQ, a sample-rate inference tool lists candidates consistent with standard symbol or SDR rates.
-- **Modulation Classification**: Explainable two-stage classifier — envelope/instantaneous-frequency test for FSK (2/4-level), noise-corrected fourth-order cumulants for BPSK, QPSK, 8-PSK, 16-QAM, 64-QAM. Ranked candidates and evidence are shown in the GUI.
-- **Demodulation**: RRC matched filter → Gardner timing recovery → M-th power carrier estimate → Costas phase tracking → Gray de-mapping for M-PSK and square QAM; band-limited frequency discriminator with k-means level slicing for M-FSK. Produces symbols (constellation view), hard bits, EVM.
+- **Modulation Classification**: an explainable decision tree covering 18 types.
+  - **Digital:** BPSK, QPSK, 8-PSK, 16-QAM, 64-QAM, OQPSK, π/4-DQPSK, 2-FSK, 4-FSK, MSK, GMSK/GFSK, OOK, 2/4-ASK.
+  - **Analog:** AM, FM, SSB (USB/LSB), plus unmodulated-carrier detection.
+  - **How it decides:** by where the message lives (envelope vs. frequency) and whether a carrier line is present, then confirms with symbol-centre structure. That means discrete levels for FSK/ASK, noise-corrected cumulants plus a 16/64-QAM grid fit for PSK/QAM, the half-symbol rail offset for OQPSK, and the asymmetric 4th-power line pair for π/4-DQPSK. Analog signals are the ones with no symbol structure; SSB is recognised by its lop-sided band.
+  - The QPSK family's carrier comes exactly from the M-th power lines, and the symbol rate is verified by the constellation it produces. Ranked candidates and the evidence are shown in the GUI.
+- **Demodulation**:
+  - **PSK/QAM:** RRC matched filter → Gardner timing → M-th power carrier estimate → Costas loop → Gray de-mapping.
+  - **FSK/MSK/GMSK:** discriminator with level slicing.
+  - **OOK/ASK:** envelope detector with automatic 2/4-level detection.
+  - **OQPSK:** 4th-power carrier, I-rail timing, Q sampled half a symbol later.
+  - **DBPSK and π/4-DQPSK:** differential detection, with no phase ambiguity.
+  - Digital demodulators produce symbols (constellation view), hard bits and EVM.
+  - **AM, FM, SSB:** envelope, discriminator and product detectors produce audio at 8 kHz, with the modulation index, peak deviation or inferred SSB carrier reported. Save it via *File → Save Demodulated Audio…*.
 - **Decoding Workbench**: De-interleave (block, convolutional, diagonal, pseudo-random), FEC decode (Viterbi with standard/custom polynomials and puncturing, Reed-Solomon with configurable field parameters, concatenated RS+conv, experimental LDPC), then bit-stream correlation: autocorrelation for frame period, sync-word search with error tolerance and inversion detection, header/payload framing, and bit export.
 - **Blind FEC Identification** (🔍 *Auto-detect* in the decoding workbench): convolutional codes are identified from the parity checks of their dual code. The library covers K = 3…9, rate 1/2 and 1/3, every generator order, and the DVB/802.11 puncture patterns 2/3–7/8. Detection works at several percent BER and reports the code phase, bit inversion and channel BER. Unknown rate-1/n codes have their generators recovered blindly. Reed-Solomon codes are identified by n, k, field polynomial, first root and exact alignment, even when every block contains symbol errors. Concatenated RS + convolutional chains are found by decoding the inner code first. Unknown binary block codes (e.g. Hamming) are reported by length and rate.
 - **Blind Interleaver Identification**: block, diagonal and convolutional interleavers are found by a stride scan over the whole code library. Short-column block and short-branch convolutional interleavers use a comb search. Pseudo-random (LCG/NumPy) interleavers use a seed search. Each result gives the dimensions and the exact bit alignment, verified by restoring the code structure.
@@ -117,6 +129,16 @@ Measured with `python scripts/eval_demod.py` on synthetic signals with known bit
 
 SNR estimates are within 0.3 dB and symbol-rate estimates within 1 Hz of ground truth on the bundled test recordings. Phase ambiguity inherent to M-PSK/QAM (rotations of the constellation) is reported as a warning; use differential decoding or a known sync word to resolve it.
 
+**Classification over all 18 types.** Measured with `python scripts/eval_classifier.py 20 15 8 4`, running the full pipeline exactly as the GUI does. Each type gets 20 randomised trials: symbol rates 1.2–9.6 kBd, 10–20 samples/symbol, carrier offsets up to ±10 % of the sample rate. SNR is measured over the full sample band.
+
+| SNR | Accuracy | Notes |
+|---|---|---|
+| 15 dB | 100 % for every type | BER 0 wherever bits are checked (4-ASK 2e-3); AM/FM audio correlation 0.92 / 0.96 |
+| 8 dB | 90–100 % for every type | |
+| 4 dB | 100 % for BPSK, QPSK, 8-PSK, 4-FSK, OOK, π/4-DQPSK, DBPSK, FM, SSB | 64-QAM 45 % (mostly read as 16-QAM), 4-ASK 45 % (read as AM); 2-FSK, MSK, GMSK, OQPSK 70–80 % |
+
+DBPSK is reported as BPSK: differential encoding is a property of the data, not the signal. It decodes correctly with the DPSK demodulator or differential decoding.
+
 ## Limitations & Next Steps
 
 - Region detection is frequency-only; bursty signals are treated as continuous.
@@ -124,6 +146,9 @@ SNR estimates are within 0.3 dB and symbol-rate estimates within 1 Hz of ground 
 - Interleaver identification needs a convolutional code inside the interleaver. Punctured codes whose parity checks are longer than the interleaver runs are only found when the code is selected under FEC first. Diagonal interleavers need columns longer than the code's check span. Pseudo-random identification searches seeds 0…N−1 for the block sizes you give it.
 - Reed-Solomon identification assumes GF(2⁸), generator α (fcr 0 or 1), ≥ 6 parity symbols and no CCSDS dual-basis mapping. Rank-based block-code detection needs a near error-free stream.
 - The absolute sample rate of a headerless file cannot be recovered; only consistent candidates are offered.
+- Modulation classification is a rule-based feature classifier: accuracy drops for 64-QAM and 4-ASK below ≈ 6 dB, and modulations outside the 18 types (OFDM, APSK, CPM variants, DSB-SC) are reported as unknown.
+- The SSB carrier is suppressed, so it is inferred as 300 Hz beyond the band edge. A tuning error shifts the pitch of the recovered audio but it stays intelligible.
+- OQPSK and M-PSK/QAM decisions carry the usual carrier-phase ambiguities (reported as warnings); OQPSK also has a one-symbol I/Q pairing ambiguity.
 - Future: deep-learning classifier for low-SNR / exotic modulations, burst segmentation, batch CLI.
 
 ## License

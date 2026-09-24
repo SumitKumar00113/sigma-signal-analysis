@@ -27,6 +27,25 @@ def _transforms(k: int) -> Iterator[tuple[str, Callable[[np.ndarray], np.ndarray
         yield "swap, inv Q", lambda g: swap(g) ^ np.array([0, 0, 1, 1], dtype=np.uint8)
 
 
+def ber_oqpsk(rx_bits: np.ndarray, tx_bits: np.ndarray) -> float:
+    """BER for OQPSK: besides the QPSK rotations, which Q a demodulator
+    pairs with each I is ambiguous by a symbol, so try re-pairing the rails."""
+    rx = np.asarray(rx_bits, dtype=np.uint8)
+    a, b = rx[0::2], rx[1::2]
+    n = min(len(a), len(b))
+    best = 1.0
+    for shift in (-1, 0, 1):
+        if shift >= 0:
+            aa, bb = a[: n - shift], b[shift:n]
+        else:
+            aa, bb = a[-shift:n], b[: n + shift]
+        m = min(len(aa), len(bb))
+        pairs = np.empty(2 * m, dtype=np.uint8)
+        pairs[0::2], pairs[1::2] = aa[:m], bb[:m]
+        best = min(best, ber_with_ambiguity(pairs, tx_bits, 2)[0])
+    return best
+
+
 def ber_with_ambiguity(
     rx_bits: np.ndarray,
     tx_bits: np.ndarray,
