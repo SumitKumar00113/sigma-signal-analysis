@@ -74,3 +74,17 @@ class TestDecoder:
         r = viterbi_decode(conv_encode(bits, code, terminate=False), code, terminated=False)
         # All but the last few bits (no flush) must match
         assert np.array_equal(r.bits[:-6], bits[:-6])
+
+
+class TestErrorCount:
+    def test_punctured_erasures_not_counted(self):
+        # Erased (punctured) positions used to be counted as channel errors
+        code = ConvCode(7, (0o171, 0o133), puncture=(1, 1, 0, 1, 1, 0))
+        coded = conv_encode(np.random.randint(0, 2, 600), code, terminate=True)
+        assert viterbi_decode(coded, code).estimated_errors == 0
+
+    def test_punctured_counts_real_errors(self):
+        code = ConvCode(7, (0o171, 0o133), puncture=(1, 1, 0, 1))
+        coded = conv_encode(np.random.randint(0, 2, 600), code, terminate=True)
+        coded[[50, 300, 600]] ^= 1
+        assert viterbi_decode(coded, code).estimated_errors == 3
