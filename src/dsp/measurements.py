@@ -9,7 +9,7 @@ from __future__ import annotations
 import numpy as np
 from scipy import signal as sp_signal
 
-from src.dsp.spectral import compute_psd, estimate_noise_floor
+from src.dsp.spectral import compute_psd, estimate_noise_floor, live_bins
 
 # ---------------------------------------------------------------------------
 # SNR
@@ -72,7 +72,9 @@ def estimate_snr_psd(
     noise_bin *= 1.1
 
     total = float(np.sum(psd_lin))
-    noise_total = noise_bin * len(psd_lin)
+    # Dead bins (empty half of an analytic signal, receiver stop-band) hold
+    # no noise, so integrate the floor over the live bins only
+    noise_total = noise_bin * int(live_bins(psd_db).sum())
     signal_total = total - noise_total
 
     if noise_total <= 0:
@@ -161,7 +163,8 @@ def estimate_frequency_offset(
     freqs = np.fft.fftshift(np.fft.fftfreq(fft_size, 1 / sample_rate))
 
     # Noise floor from low percentile; keep only bins clearly above it
-    noise = np.percentile(psd_sum, 20.0) * 1.1
+    psd_db = 10.0 * np.log10(psd_sum + 1e-300)
+    noise = np.percentile(psd_sum[live_bins(psd_db)], 20.0) * 1.1
     above = psd_sum - noise
     above[above < 0] = 0.0
     thresh = 0.1 * np.max(above)

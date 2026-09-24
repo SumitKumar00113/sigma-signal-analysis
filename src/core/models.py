@@ -90,6 +90,8 @@ class RecordingMetadata(BaseModel):
 
     # WAV-specific
     wav_interpretation: WavInterpretation = WavInterpretation.REAL
+    wav_channel: int = 0             # real channel used for REAL / DUAL_CHANNEL / …
+    wav_swap_iq: bool = False        # STEREO_IQ with left = Q, right = I
 
     # Optional provenance
     sensor: str = ""

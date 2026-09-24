@@ -43,8 +43,14 @@ class TestWavReaderMono:
         samples = reader.read_samples(0, 1000)
         assert samples.dtype == np.complex64
         assert len(samples) == 1000
-        # Mono → imaginary part should be zero
-        assert np.allclose(samples.imag, 0, atol=1e-6)
+        # Mono → analytic signal: the 1 kHz sine becomes one complex tone
+        # at +1 kHz (constant envelope 0.8), not I = x, Q = 0
+        mid = samples[200:800]
+        assert np.allclose(np.abs(mid), 0.8, atol=0.01)
+        spec = np.abs(np.fft.fft(reader.read_samples(0, 4800)))
+        freqs = np.fft.fftfreq(4800, 1 / 48000)
+        assert freqs[np.argmax(spec)] == pytest.approx(1000, abs=20)
+        assert spec[np.argmin(np.abs(freqs + 1000))] < 1e-3 * spec.max()
 
     def test_total_samples(self, mono_wav: Path):
         reader = WavReader(mono_wav)

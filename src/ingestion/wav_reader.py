@@ -2,7 +2,14 @@
 
 Supports PCM 8/16/24/32-bit, IEEE float32, mono, stereo (I/Q), and
 multi-channel WAV files.  Interpretation mode controls how channels map
-to complex samples (PRD §6.1).
+to complex samples (PRD §6.1):
+
+* ``STEREO_IQ`` – left = I, right = Q (optionally swapped).
+* ``REAL`` / ``DUAL_CHANNEL`` / ``CUSTOM`` – one real channel, converted to
+  its analytic signal (see :mod:`src.ingestion.real_to_complex`) so the
+  spectrum is one-sided and signals keep their true audio frequency.
+* ``DISCRIMINATOR`` – FM-discriminator audio, re-modulated to a complex
+  FM signal whose instantaneous frequency follows the audio.
 """
 
 from __future__ import annotations
@@ -22,6 +29,14 @@ from src.core.enums import (
 )
 from src.core.models import FileValidationReport, RecordingMetadata
 from src.ingestion.base import FileReader
+from src.ingestion.real_to_complex import (
+    InterpretationSuggestion,
+    analytic_from_padded,
+    discriminator_phase,
+    hilbert_margin,
+    padded_slice,
+    suggest_wav_interpretation,
+)
 from src.ingestion.validator import compute_checksum, validate_file_basics, validate_samples
 
 
@@ -32,9 +47,14 @@ class WavReader(FileReader):
         self,
         path: str | Path,
         interpretation: WavInterpretation = WavInterpretation.REAL,
+        channel: int = 0,
+        swap_iq: bool = False,
     ) -> None:
         super().__init__(path)
         self.interpretation = interpretation
+        self.channel = channel          # real channel analysed for REAL / DUAL_CHANNEL / …
+        self.swap_iq = swap_iq          # STEREO_IQ: left = Q, right = I
+        self._disc_phase: np.ndarray | None = None
         self._metadata: RecordingMetadata | None = None
         self._raw_rate: int = 0
         self._raw_data: np.ndarray | None = None
@@ -102,9 +122,8 @@ class WavReader(FileReader):
         try:
             self._ensure_loaded()
             assert self._raw_data is not None
-            preview = self._to_float(self._raw_data[:min(100_000, len(self._raw_data))])
-            preview_complex = preview[:, 0] + 0j
-            report = validate_samples(preview_complex, report)
+            n_preview = min(100_000, len(self._raw_data))
+            report = validate_samples(self.read_samples(0, n_preview), report)
         except Exception as exc:
             report.warnings.append(f"Could not run numeric checks: {exc}")
 
@@ -160,14 +179,39 @@ class WavReader(FileReader):
         if count < 0:
             count = total - start
         end = min(start + count, total)
-        chunk = self._to_float(self._raw_data[start:end])
+        start = max(0, start)
+        if end <= start:
+            return np.zeros(0, dtype=np.complex64)
 
         if self.interpretation == WavInterpretation.STEREO_IQ and self._n_channels >= 2:
-            # Left = I, Right = Q
-            return (chunk[:, 0] + 1j * chunk[:, 1]).astype(np.complex64)
-        else:
-            # Mono / real
-            return (chunk[:, 0] + 0j).astype(np.complex64)
+            chunk = self._to_float(self._raw_data[start:end])
+            i, q = (1, 0) if self.swap_iq else (0, 1)
+            return (chunk[:, i] + 1j * chunk[:, q]).astype(np.complex64)
+
+        ch = self._real_channel()
+        if self.interpretation == WavInterpretation.DISCRIMINATOR:
+            if self._disc_phase is None:
+                self._disc_phase = discriminator_phase(self._to_float(self._raw_data[:, ch]))
+            return np.exp(1j * self._disc_phase[start:end]).astype(np.complex64)
+
+        # Real signal → analytic signal (one-sided spectrum), with enough
+        # context around the chunk that chunked reads match a full read
+        margin = hilbert_margin()
+        column = self._raw_data[:, ch]
+        padded = self._to_float(padded_slice(column, start, end, margin))
+        return analytic_from_padded(padded)
+
+    def _real_channel(self) -> int:
+        if not 0 <= self.channel < self._n_channels:
+            raise ValueError(f"Channel {self.channel} not in file ({self._n_channels} channels)")
+        return self.channel
+
+    def suggest_interpretation(self) -> InterpretationSuggestion:
+        """Heuristic guess of how this file's channels should be read."""
+        self._ensure_loaded()
+        assert self._raw_data is not None
+        preview = self._to_float(self._raw_data[: min(200_000, len(self._raw_data))])
+        return suggest_wav_interpretation(preview, float(self._raw_rate))
 
     def total_samples(self) -> int:
         self._ensure_loaded()
