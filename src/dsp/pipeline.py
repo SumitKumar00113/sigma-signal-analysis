@@ -17,6 +17,7 @@ import contextlib
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import Any
 
 import numpy as np
 
@@ -42,6 +43,44 @@ from src.dsp.preprocessing import normalize_peak, remove_dc_mean
 from src.dsp.spectral import SpectralAnalysis, analyze_spectrum
 from src.ingestion.validator import validate_samples
 
+_FSK_FAMILY = {ModulationType.FSK2, ModulationType.FSK4, ModulationType.MSK,
+               ModulationType.GMSK, ModulationType.GFSK}
+_ASK_FAMILY = {ModulationType.ASK, ModulationType.OOK}
+
+
+def _rate_for_family(x: np.ndarray, fs: float, mod: ModulationType, current: float) -> float:
+    """Best symbol rate for a known modulation family.
+
+    Used when the learned model, not the rules, chose the modulation: the
+    generic estimate may have locked onto something else.  Candidates from
+    the family's own estimator (plus the current value) are scored by the
+    structure the family shows at its symbol centres.
+    """
+    from src.dsp.demod import envelope_symbols, fit_levels, fsk_front_end, oqpsk_rails, qpsk_fit
+
+    if mod in _FSK_FAMILY:
+        method = "instfreq"
+    elif mod in _ASK_FAMILY:
+        method = "transitions"
+    else:
+        method = "auto"
+    rates = [current] + [r for r, _ in estimate_symbol_rate_candidates(x, fs, method)[:3]]
+    best, best_score = current, -np.inf
+    for r in dict.fromkeys(round(v, 1) for v in rates if v > 0):
+        try:
+            if mod in _FSK_FAMILY:
+                score = fit_levels(fsk_front_end(x, fs, r).freq_symbols_hz).separation
+            elif mod in _ASK_FAMILY:
+                score = fit_levels(envelope_symbols(x, fs, r)[0]).separation
+            else:
+                off, aligned, *_ = oqpsk_rails(x, fs, r)
+                score = max(qpsk_fit(off), qpsk_fit(aligned))
+        except SigmaError:
+            continue
+        if score > best_score:
+            best, best_score = r, score
+    return float(best)
+
 
 @dataclass
 class PipelineConfig:
@@ -62,6 +101,13 @@ class PipelineConfig:
 
     # Cap on samples used for the heavy stages (classification/demod)
     max_demod_samples: int = 2_000_000
+
+    # Modulation classifier: "rules" (explainable decision tree), "ml"
+    # (learned model only) or "hybrid" (rules, corrected by the model where
+    # it is much surer).  The model is loaded from the default locations
+    # (see src/ml/model.py) unless given; without one, rules are used.
+    classifier_mode: str = "hybrid"
+    model: Any = None
 
     detection_config: DetectionConfig = field(default_factory=DetectionConfig)
 
@@ -85,6 +131,8 @@ class PipelineResult:
     frequency_offset_hz: float = 0.0
     symbol_rate_candidates: list[tuple[float, float]] = field(default_factory=list)
     classification: ClassificationResult | None = None
+    model_prediction: Any = None           # src.ml.model.Prediction, when a model ran
+    classifier_source: str = "rules"       # which classifier made the final call
     demod: DemodResult | None = None
     stage_errors: dict[str, str] = field(default_factory=dict)
 
@@ -238,38 +286,7 @@ class AnalysisPipeline:
         if cfg.classify and signal_present and not cfg.modulation_override:
             self._emit_progress(0.55, "Classifying modulation...")
             try:
-                # Analog modulations have no symbol rate, so classify even
-                # without one and let the classifier weigh its confidence
-                result.classification = classify_modulation(
-                    heavy, fs, symbol_rate,
-                    snr_db=result.snr_db,
-                    cfo_hz=result.frequency_offset_hz if cfg.measure_freq_offset else None,
-                    symbol_rate_confidence=(1.0 if cfg.symbol_rate_override
-                                            else analysis.symbol_rate_confidence),
-                    rate_candidates=result.symbol_rate_candidates,
-                )
-                modulation = result.classification.modulation
-                c = result.classification
-                if c.symbol_rate_hz and not cfg.symbol_rate_override:
-                    analysis.warnings.append(
-                        f"Symbol rate revised {symbol_rate:,.1f} → {c.symbol_rate_hz:,.1f} baud "
-                        "(cleaner constellation).")
-                    symbol_rate = c.symbol_rate_hz
-                    analysis.symbol_rate_hz = symbol_rate
-                if c.carrier_hz is not None:
-                    result.frequency_offset_hz = float(c.carrier_hz)
-                analysis.modulation = modulation
-                analysis.modulation_confidence = result.classification.confidence
-                analysis.modulation_candidates = [
-                    {"modulation": m.value, "probability": round(p, 3)}
-                    for m, p in result.classification.candidates
-                ]
-                analysis.parameters.append(ParameterEstimate(
-                    parameter="modulation", value=modulation.value,
-                    status=ParameterStatus.INFERRED,
-                    confidence=result.classification.confidence,
-                    evidence=list(result.classification.evidence),
-                ))
+                modulation, symbol_rate = self._classify(heavy, fs, symbol_rate, result)
             except Exception as exc:  # noqa: BLE001
                 result.stage_errors["classification"] = str(exc)
         elif cfg.modulation_override:
@@ -320,6 +337,77 @@ class AnalysisPipeline:
         return result
 
     # ------------------------------------------------------------------
+
+    def _classify(self, heavy: np.ndarray, fs: float, symbol_rate: float,
+                  result: PipelineResult) -> tuple[ModulationType, float]:
+        """Rule-based classification, optionally combined with the learned
+        model.  Returns the modulation and the (possibly revised) symbol rate."""
+        cfg = self.config
+        analysis = result.analysis
+        cfo_in = result.frequency_offset_hz if cfg.measure_freq_offset else None
+        rate_conf = 1.0 if cfg.symbol_rate_override else analysis.symbol_rate_confidence
+        # Analog modulations have no symbol rate, so classify even without
+        # one and let the classifier weigh its confidence
+        rule = classify_modulation(
+            heavy, fs, symbol_rate, snr_db=result.snr_db, cfo_hz=cfo_in,
+            symbol_rate_confidence=rate_conf, rate_candidates=result.symbol_rate_candidates,
+        )
+        result.classification = rule
+
+        decision_mod, confidence = rule.modulation, rule.confidence
+        candidates, evidence = list(rule.candidates), list(rule.evidence)
+        source = "rules"
+        if cfg.classifier_mode != "rules":
+            model = cfg.model
+            if model is None:
+                from src.ml.model import load_default_model
+
+                model = load_default_model()
+            if model is not None:
+                from src.ml.features import extract_features
+                from src.ml.hybrid import combine
+
+                cfo = cfo_in if cfo_in is not None else estimate_frequency_offset(heavy, fs)
+                pred = model.predict(extract_features(heavy, fs, symbol_rate, rate_conf, cfo))
+                result.model_prediction = pred
+                d = combine(rule, pred, cfg.classifier_mode)
+                decision_mod, confidence, candidates, source = (d.modulation, d.confidence,
+                                                                d.candidates, d.source)
+                evidence = (d.evidence + evidence) if d.source == "model" else evidence + d.evidence
+        result.classifier_source = source
+        if source == "model" and decision_mod not in ANALOG_MODULATIONS \
+                and decision_mod != ModulationType.UNKNOWN and not cfg.symbol_rate_override:
+            new_rate = _rate_for_family(heavy, fs, decision_mod, symbol_rate)
+            if new_rate and abs(new_rate - symbol_rate) > 0.01 * max(symbol_rate, 1.0):
+                analysis.warnings.append(
+                    f"Symbol rate re-estimated for {decision_mod.value}: {symbol_rate:,.1f} → "
+                    f"{new_rate:,.1f} baud.")
+                symbol_rate = new_rate
+                analysis.symbol_rate_hz = new_rate
+
+        # The rules' refinements (exact carrier, verified rate) belong to the
+        # rules' answer; keep them only if that is the final answer
+        if decision_mod == rule.modulation:
+            if rule.symbol_rate_hz and not cfg.symbol_rate_override:
+                analysis.warnings.append(
+                    f"Symbol rate revised {symbol_rate:,.1f} → {rule.symbol_rate_hz:,.1f} baud "
+                    "(cleaner constellation).")
+                symbol_rate = rule.symbol_rate_hz
+                analysis.symbol_rate_hz = symbol_rate
+            if rule.carrier_hz is not None:
+                result.frequency_offset_hz = float(rule.carrier_hz)
+
+        analysis.modulation = decision_mod
+        analysis.modulation_confidence = float(confidence)
+        analysis.modulation_candidates = [
+            {"modulation": m.value, "probability": round(float(p), 3)} for m, p in candidates
+        ]
+        analysis.parameters.append(ParameterEstimate(
+            parameter="modulation", value=decision_mod.value,
+            status=ParameterStatus.INFERRED, confidence=float(confidence),
+            evidence=evidence + [f"Decided by: {source}"],
+        ))
+        return decision_mod, symbol_rate
 
     @staticmethod
     def _overall_confidence(result: PipelineResult) -> ConfidenceLevel:

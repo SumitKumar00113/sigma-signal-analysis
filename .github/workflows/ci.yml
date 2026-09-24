@@ -28,7 +28,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install package
-        run: pip install -e '.[gui,dev]'
+        run: pip install -e '.[gui,dev,ml]'
 
       - name: Lint (ruff)
         run: ruff check src/ tests/

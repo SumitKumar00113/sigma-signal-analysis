@@ -7,6 +7,10 @@ audio correlation for analog types).  Not a unit test; a development
 harness.
 
 Run:  python scripts/eval_classifier.py [trials_per_cell] [snr_db ...]
+
+With a learned model installed (see ``python -m src.ml.train``; or point
+``SIGMA_MODEL`` at a model file) the table also shows the accuracy of the
+model alone and of the hybrid decision, measured on the same signals.
 """
 
 from __future__ import annotations
@@ -91,13 +95,40 @@ def _audio_corr(audio: np.ndarray, rate: float, msg: np.ndarray, fs: float) -> f
     return float(abs(np.corrcoef(a2, r2)[0, 1]))
 
 
+def _match(got: M, truth: M) -> bool:
+    return got == truth or got in EQUIVALENT.get(truth, set())
+
+
+class _Tally:
+    def __init__(self) -> None:
+        self.n = 0
+        self.rules = self.model = self.hybrid = 0
+        self.has_model = False
+
+    def add(self, res, truth: M) -> None:
+        self.n += 1
+        if res.classification is not None:
+            self.rules += _match(res.classification.modulation, truth)
+        if res.model_prediction is not None:
+            self.has_model = True
+            self.model += _match(res.model_prediction.modulation, truth)
+        self.hybrid += _match(res.analysis.modulation, truth)
+
+    def text(self) -> str:
+        if not self.has_model:
+            return ""
+        return (f"  rules {self.rules / self.n:4.0%}  model {self.model / self.n:4.0%}  "
+                f"hybrid {self.hybrid / self.n:4.0%}")
+
+
 def run(trials: int, snrs: list[float]) -> None:
     rng = np.random.default_rng(0)
     for snr in snrs:
         print(f"\n=== SNR {snr:g} dB ({trials} trials each) ===")
         print(f"{'truth':11s} {'accuracy':>8s}  {'median BER / audio corr':>24s}  confusions")
+        totals = _Tally()
         for truth, (gen, k) in DIGITAL.items():
-            hits, quality, wrong = 0, [], Counter()
+            hits, quality, wrong, tally = 0, [], Counter(), _Tally()
             for _ in range(trials):
                 np.random.seed(int(rng.integers(1 << 30)))
                 rs = float(rng.choice([1200, 2400, 4800, 9600]))
@@ -105,8 +136,10 @@ def run(trials: int, snrs: list[float]) -> None:
                 f0 = float(rng.uniform(-0.1, 0.1) * fs)
                 x, bits = gen(3000, rs, fs, snr, f0)
                 res = AnalysisPipeline().run(x, RecordingMetadata(sample_rate_hz=fs))
+                tally.add(res, truth)
+                totals.add(res, truth)
                 got = res.analysis.modulation
-                if got == truth or got in EQUIVALENT.get(truth, set()):
+                if _match(got, truth):
                     hits += 1
                     if bits is not None and res.demod is not None and len(res.demod.bits):
                         b = res.demod.bits
@@ -119,15 +152,17 @@ def run(trials: int, snrs: list[float]) -> None:
                 else:
                     wrong[got.value] += 1
             q = f"{np.median(quality):.4f}" if quality else "—"
-            print(f"{truth.value:11s} {hits / trials:8.0%}  {q:>24s}  {dict(wrong)}")
+            print(f"{truth.value:11s} {hits / trials:8.0%}  {q:>24s}  {dict(wrong)}{tally.text()}")
         for truth, agen in ANALOG.items():
-            hits, quality, wrong = 0, [], Counter()
+            hits, quality, wrong, tally = 0, [], Counter(), _Tally()
             for _ in range(trials):
                 np.random.seed(int(rng.integers(1 << 30)))
                 fs = float(rng.choice([24000, 48000]))
                 f0 = float(rng.uniform(-0.1, 0.1) * fs)
                 x, msg = agen(int(1.5 * fs), fs, snr, f0)
                 res = AnalysisPipeline().run(x, RecordingMetadata(sample_rate_hz=fs))
+                tally.add(res, truth)
+                totals.add(res, truth)
                 got = res.analysis.modulation
                 if got == truth:
                     hits += 1
@@ -137,7 +172,9 @@ def run(trials: int, snrs: list[float]) -> None:
                 else:
                     wrong[got.value] += 1
             q = f"corr {np.median(quality):.2f}" if quality else "—"
-            print(f"{truth.value:11s} {hits / trials:8.0%}  {q:>24s}  {dict(wrong)}")
+            print(f"{truth.value:11s} {hits / trials:8.0%}  {q:>24s}  {dict(wrong)}{tally.text()}")
+        if totals.has_model:
+            print(f"{'ALL':11s} {totals.hybrid / totals.n:8.1%}  {'':24s}  {totals.text()}")
 
 
 if __name__ == "__main__":

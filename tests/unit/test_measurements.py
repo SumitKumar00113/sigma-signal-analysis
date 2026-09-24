@@ -134,3 +134,16 @@ class TestNewEstimators:
         np.random.seed(0)
         sig, _ = generate_2fsk(4000, 8e3, 2.4e6, 20e3, 14.0)
         assert abs(estimate_frequency_offset(sig, 2.4e6)) < 1500
+
+
+def test_rate_candidates_merge_does_not_crash(monkeypatch):
+    """Regression: the agreement bonus looked up a merged key with a bare
+    next() and raised StopIteration when the stronger rate had drifted."""
+    import src.dsp.measurements as m
+
+    monkeypatch.setattr(m, "estimate_symbol_rate_envelope", lambda *a: [(1000.0, 0.3)])
+    monkeypatch.setattr(m, "estimate_symbol_rate_instfreq", lambda *a: [(1009.0, 0.5)])
+    monkeypatch.setattr(m, "estimate_symbol_rate_transitions", lambda *a: [(1018.0, 0.9)])
+    monkeypatch.setattr(m, "estimate_symbol_rate_quadrature", lambda *a: [])
+    out = m.estimate_symbol_rate_candidates(np.zeros(4096, dtype=np.complex64), 48000.0)
+    assert out and 990 < out[0][0] < 1030
