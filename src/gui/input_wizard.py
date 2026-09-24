@@ -11,6 +11,7 @@ from pathlib import Path
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
     QDoubleSpinBox,
@@ -124,6 +125,15 @@ class InputWizard(QDialog):
         self._wav_interp_combo = QComboBox()
         self._wav_interp_combo.addItems([w.value for w in WavInterpretation])
         form.addRow("WAV Interpretation:", self._wav_interp_combo)
+        self._wav_channel_spin = QSpinBox()
+        self._wav_channel_spin.setRange(0, 15)
+        self._wav_channel_spin.setToolTip("Channel analysed for real / dual-channel WAVs")
+        form.addRow("WAV Channel:", self._wav_channel_spin)
+        self._wav_swap_check = QCheckBox("Swap I/Q (left = Q, right = I)")
+        form.addRow("", self._wav_swap_check)
+        self._wav_hint = QLabel("")
+        self._wav_hint.setWordWrap(True)
+        form.addRow("", self._wav_hint)
 
         self._offset_spin = QSpinBox()
         self._offset_spin.setRange(0, 1_000_000)
@@ -229,6 +239,7 @@ class InputWizard(QDialog):
             self._dtype_combo.setEnabled(False)
             self._iq_combo.setEnabled(False)
             self._detect_label.setText("✓ Detected WAV format")
+            self._suggest_wav_interpretation()
         elif ext in (".sigmf-meta", ".sigmf-data", ".sigmf-archive"):
             self._detected_format = FileFormat.SIGMF
             self._format_combo.setCurrentText(FileFormat.SIGMF.value)
@@ -257,6 +268,27 @@ class InputWizard(QDialog):
         self._offset_spin.setEnabled(is_raw)
         is_wav = fmt == FileFormat.WAV.value
         self._wav_interp_combo.setEnabled(is_wav)
+        self._wav_channel_spin.setEnabled(is_wav)
+        self._wav_swap_check.setEnabled(is_wav)
+
+    def _suggest_wav_interpretation(self) -> None:
+        """Pre-select how the WAV's channels map to complex samples."""
+        from src.ingestion.wav_reader import WavReader
+
+        try:
+            reader = WavReader(self._file_path)
+            suggestion = reader.suggest_interpretation()
+            header_rate = reader.read_metadata().sample_rate_hz
+        except Exception as exc:  # noqa: BLE001
+            self._wav_hint.setText(f"⚠ Could not inspect channels: {exc}")
+            return
+        self._wav_interp_combo.setCurrentText(suggestion.interpretation.value)
+        if header_rate > 0:
+            self._sr_spin.setValue(header_rate)
+        self._wav_hint.setText(
+            f"Suggested “{suggestion.interpretation.value}” "
+            f"({suggestion.confidence:.0%}): {suggestion.reason}"
+        )
 
     # ------------------------------------------------------------------
     # Sample-rate inference
@@ -278,7 +310,9 @@ class InputWizard(QDialog):
             if fmt == FileFormat.WAV:
                 reader = WavReader(self._file_path,
                                    interpretation=WavInterpretation(
-                                       self._wav_interp_combo.currentText()))
+                                       self._wav_interp_combo.currentText()),
+                                   channel=self._wav_channel_spin.value(),
+                                   swap_iq=self._wav_swap_check.isChecked())
                 header_sr = reader.read_metadata().sample_rate_hz
             elif fmt == FileFormat.SIGMF:
                 reader = SigMFReader(self._file_path)
@@ -332,6 +366,8 @@ class InputWizard(QDialog):
             center_frequency_hz=self._cf_spin.value(),
             iq_order=IQOrder(self._iq_combo.currentText()),
             wav_interpretation=WavInterpretation(self._wav_interp_combo.currentText()),
+            wav_channel=self._wav_channel_spin.value(),
+            wav_swap_iq=self._wav_swap_check.isChecked(),
             byte_offset=self._offset_spin.value(),
             num_channels=self._channels_spin.value(),
             notes=self._notes_edit.text(),

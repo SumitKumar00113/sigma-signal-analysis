@@ -472,7 +472,8 @@ class MainWindow(QMainWindow):
             from src.ingestion.wav_reader import WavReader
 
             if meta.source_format == FileFormat.WAV:
-                reader = WavReader(path, interpretation=meta.wav_interpretation)
+                reader = WavReader(path, interpretation=meta.wav_interpretation,
+                                   channel=meta.wav_channel, swap_iq=meta.wav_swap_iq)
             elif meta.source_format == FileFormat.SIGMF:
                 reader = SigMFReader(path)
             else:

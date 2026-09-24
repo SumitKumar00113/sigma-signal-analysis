@@ -11,7 +11,8 @@
 ```
 src/
 ├── core/           # Pydantic models, enums, config, exceptions
-├── ingestion/      # FileReader subclasses (WAV, SigMF, Raw IQ), normalizer, validator
+├── ingestion/      # FileReader subclasses (WAV, SigMF, Raw IQ), normalizer, validator,
+│                   #   real→complex conversion (Hilbert / FM re-modulation)
 ├── dsp/
 │   ├── spectral.py        # Welch PSD, spectrogram, peaks, noise floor, occupied BW
 │   ├── preprocessing.py   # DC removal, normalisation, frequency translation, FIR filters
@@ -38,6 +39,7 @@ src/
 ## Core Capabilities
 
 - **Universal Signal Ingestion**: Supports `.wav` (Mono/Stereo IQ), Raw `.iq` (with customizable data types such as `cf32_le`, `ci16_le`, `cu8`), and `.sigmf-data` / `.sigmf-meta` format recordings.
+- **Real-signal WAV handling**: mono (real) audio, e.g. HF receiver output or a modem channel, is converted to its analytic signal with a 255-tap Hilbert FIR. Image rejection is > 80 dB and chunked reads are bit-exact. The spectrum is one-sided, so a 1800 Hz audio carrier appears at +1800 Hz instead of as a mirrored pair. Discriminator audio is FM re-modulated. Stereo files get an automatic I/Q vs. dual-channel vs. duplicated-mono suggestion in the input wizard, plus channel selection and I/Q swap. Noise-floor estimates ignore "dead" spectrum regions (the empty half of an analytic signal, receiver stop-bands), so SNR, bandwidth and carrier estimates remain correct for real recordings.
 - **Robust Normalization & Validation**: Automatically converts raw integer/float bytes to uniform `complex64` arrays. Detects signal impairments like clipping, NaNs/Infs, DC offsets, and IQ gain imbalances.
 - **Advanced DSP Engine**: Powered by `NumPy` and `SciPy`, provides Welch's method PSD, spectrograms, noise-floor estimation, spectral peak detection, signal region detection, SNR estimation, and occupied bandwidth measurement.
 - **Interactive GUI**: Built on **PySide6** and **PyQtGraph**. Dark-themed UI with `QThreadPool` worker architecture to prevent UI freezing during intensive DSP tasks.

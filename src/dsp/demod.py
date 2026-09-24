@@ -29,6 +29,7 @@ from src.dsp.measurements import (
     bandlimit_to_signal,
     compute_instantaneous_frequency,
     estimate_frequency_offset,
+    estimate_snr_inband,
 )
 from src.dsp.preprocessing import translate_frequency
 from src.dsp.sync import (
@@ -333,11 +334,19 @@ def demodulate_fsk(
     if coarse_cfo_hz is None:
         coarse_cfo_hz = estimate_frequency_offset(samples, sample_rate)
 
-    # Band-limit to the signal, then discriminate
-    x = bandlimit_to_signal(samples, sample_rate)
+    # Mix the tone pair to DC *before* resampling: at target_sps the new
+    # rate can be far below the carrier (e.g. a 1700 Hz audio modem at
+    # 8 × 300 Bd = 2400 Hz), which would alias the tones.
+    x = translate_frequency(samples, sample_rate, -coarse_cfo_hz)
+    x = bandlimit_to_signal(x, sample_rate)
+    # Keep the whole tone spread inside the resampled band
+    _, occupied = estimate_snr_inband(x, sample_rate)
+    if occupied > 0:
+        target_sps = max(target_sps, int(np.ceil(1.25 * occupied / symbol_rate)))
+    target_sps = min(target_sps, max(2, int(sample_rate / symbol_rate)))
     x, sps = resample_to_sps(x, sample_rate, symbol_rate, target_sps=target_sps)
     fs_eff = sps * symbol_rate
-    inst_freq = compute_instantaneous_frequency(x, fs_eff) - coarse_cfo_hz
+    inst_freq = compute_instantaneous_frequency(x, fs_eff)
 
     # Integrate over one symbol (matched filter for a rectangular pulse)
     integrated = moving_average(inst_freq, int(round(sps)))

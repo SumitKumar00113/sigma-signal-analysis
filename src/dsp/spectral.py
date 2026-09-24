@@ -139,9 +139,27 @@ class SpectralAnalysis:
     dc_power_db: float = 0.0
 
 
+#: Bins this far below the top of the spectrum carry no noise at all: the
+#: empty negative half of an analytic (real-recording) signal, or the
+#: stop-band of band-limited receiver audio.  They must not drag the noise
+#: floor down, or all the real in-band noise would look like signal.
+DEAD_BAND_DB = 75.0
+_MIN_LIVE_FRACTION = 0.02
+
+
+def live_bins(psd_db: np.ndarray) -> np.ndarray:
+    """Mask of bins that are not "dead" (see :data:`DEAD_BAND_DB`)."""
+    psd_db = np.asarray(psd_db, dtype=np.float64)
+    live = psd_db > np.percentile(psd_db, 99.0) - DEAD_BAND_DB
+    if live.mean() < _MIN_LIVE_FRACTION:        # e.g. a pure tone: keep everything
+        return np.ones_like(live, dtype=bool)
+    return live
+
+
 def estimate_noise_floor(psd_db: np.ndarray, percentile: float = 25.0) -> float:
-    """Estimate noise floor as a low percentile of the PSD."""
-    return float(np.percentile(psd_db, percentile))
+    """Estimate noise floor as a low percentile of the live PSD bins."""
+    psd_db = np.asarray(psd_db)
+    return float(np.percentile(psd_db[live_bins(psd_db)], percentile))
 
 
 def detect_peaks(
