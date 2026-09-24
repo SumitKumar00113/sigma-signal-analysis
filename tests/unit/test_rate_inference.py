@@ -27,3 +27,18 @@ def test_noise_has_no_candidates():
     noise = (np.random.randn(50000) + 1j * np.random.randn(50000)).astype(np.complex64)
     inf = infer_sample_rate_candidates(noise)
     assert inf.confidence < 0.5
+
+
+def test_qpsk_with_iq_imbalance():
+    """IQ imbalance puts an image at −offset; its beat with the signal (2·offset)
+    is the strongest envelope line.  The rate is checked against the
+    constellation, as in the pipeline."""
+    from src.dsp import synth
+
+    np.random.seed(7)
+    sig, _ = synth.generate_mpsk(4000, 12.5e3, 250e3, 4, 12.0, -800.0)
+    ph = np.radians(10)
+    sig = sig.real + 1j * 1.2 * (sig.imag * np.cos(ph) + sig.real * np.sin(ph))
+    inf = infer_sample_rate_candidates(sig.astype(np.complex64))
+    assert abs(inf.symbol_rate_cycles_per_sample - 0.05) < 0.001
+    assert any(abs(c.sample_rate_hz - 250e3) < 1 for c in inf.candidates)
