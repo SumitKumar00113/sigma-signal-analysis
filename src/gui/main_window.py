@@ -54,6 +54,7 @@ class MainWindow(QMainWindow):
         self._current_samples: np.ndarray | None = None
         self._last_result: PipelineResult | None = None
         self._analysis_running = False
+        self._auto_after_analysis = False       # one-click: decode once analysis is done
         self._classifier_mode = "hybrid"
         self._model = None                      # explicitly loaded model (else default)
         self._training = False
@@ -119,6 +120,10 @@ class MainWindow(QMainWindow):
         run_action.setShortcut(QKeySequence("Ctrl+R"))
         run_action.triggered.connect(self._on_run_analysis)
         analysis_menu.addAction(run_action)
+        auto_action = QAction("⚡ &Auto-Analyse (analysis + decoding)", self)
+        auto_action.setShortcut(QKeySequence("Ctrl+Shift+R"))
+        auto_action.triggered.connect(self._on_auto_analyse)
+        analysis_menu.addAction(auto_action)
         analysis_menu.addSeparator()
 
         from src.ml.model import ml_available
@@ -179,6 +184,7 @@ class MainWindow(QMainWindow):
         tb.addAction("💾 Save", self._on_save)
         tb.addSeparator()
         tb.addAction("▶ Run Analysis", self._on_run_analysis)
+        tb.addAction("⚡ Auto-Analyse", self._on_auto_analyse)
         tb.addAction("📤 Export", self._on_export)
         tb.addSeparator()
         tb.addAction("⚙ Settings", self._on_settings)
@@ -203,6 +209,7 @@ class MainWindow(QMainWindow):
         self._waterfall_viewer = WaterfallViewer()
         self._constellation_viewer = ConstellationViewer()
         self._decoding_panel = DecodingPanel()
+        self._decoding_panel.auto_decode_finished.connect(self._on_auto_decode_finished)
 
         self.setCentralWidget(self._central_stack)
 
@@ -528,6 +535,10 @@ class MainWindow(QMainWindow):
             self._log(f"  ⚠ {stage}: {err}")
         self._log(f"  ({result.processing_time_ms:,.0f} ms)")
 
+        if self._auto_after_analysis:
+            self._auto_after_analysis = False
+            self._start_auto_decode(result)
+
     def _show_result(self, result: PipelineResult) -> None:
         """Results panel, constellation, bits and burst overlay for the
         current main result (after an analysis or a burst selection)."""
@@ -542,7 +553,7 @@ class MainWindow(QMainWindow):
             src = f"{d.modulation.value} @ {d.symbol_rate_hz:,.0f} baud"
             if result.primary_burst is not None and result.bursts:
                 src += f", burst {result.bursts[result.primary_burst].index + 1}"
-            self._decoding_panel.set_bits(d.bits, src)
+            self._decoding_panel.set_bits(d.bits, src, d.bits_per_symbol, d.modulation)
         else:
             self._constellation_viewer.clear()
             self._decoding_panel.clear()
@@ -622,12 +633,56 @@ class MainWindow(QMainWindow):
             ["Overall", a.overall_confidence.value]))
         results_item.setExpanded(True)
 
+    # ---- One-click auto-analyse ------------------------------------------
+
+    @Slot()
+    def _on_auto_analyse(self) -> None:
+        """Analysis, then the full decoding chain on the demodulated bits."""
+        if self._current_samples is None or self._current_metadata is None:
+            QMessageBox.information(self, "Auto-Analyse", "No recording loaded.")
+            return
+        if self._analysis_running or self._decoding_panel.auto_decode_running:
+            self._log("ℹ Analysis already running.")
+            return
+        self._log("⚡ Auto-Analyse: analysis → bit mapping → interleaver → FEC → framing")
+        self._auto_after_analysis = True
+        self._on_run_analysis()
+        if not self._analysis_running:           # analysis did not start
+            self._auto_after_analysis = False
+
+    def _start_auto_decode(self, result: PipelineResult) -> None:
+        d = result.demod
+        if d is None:
+            self._log("⚡ Auto-Analyse: nothing was demodulated, so there is no bit stream.")
+            return
+        if d.audio is not None:
+            self._log(f"⚡ Auto-Analyse: {d.modulation.value} is analog — the demodulated "
+                      "audio is ready (File → Save Demodulated Audio…); no bits to decode.")
+            return
+        if d.num_bits < 256:
+            self._log(f"⚡ Auto-Analyse: only {d.num_bits} bits demodulated; need ≥ 256.")
+            return
+        self._central_stack.setCurrentWidget(self._decoding_panel)
+        self._status_label.setText("Auto-decoding…")
+        self._log(f"⚡ Decoding {d.num_bits:,} bits…")
+        self._decoding_panel.run_auto_decode()
+
+    @Slot(object)
+    def _on_auto_decode_finished(self, res: object) -> None:
+        self._status_label.setText("Ready")
+        self._log("⚡ Auto-decode result:")
+        for line in res.summary().splitlines():
+            self._log(f"  {line}")
+        for f in res.framing.fields:
+            self._log(f"    bits {f.start}–{f.start + f.length - 1}: {f.description}")
+
     @Slot(str)
     def _on_analysis_error(self, error: str) -> None:
         self._analysis_running = False
         self._results.set_busy(False)
         self._progress_bar.setVisible(False)
         self._status_label.setText("Error")
+        self._auto_after_analysis = False
         self._log(f"✗ Analysis error: {error}")
 
     @Slot()

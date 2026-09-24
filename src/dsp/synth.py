@@ -413,3 +413,44 @@ def add_phase_noise(signal: np.ndarray, std_deg_per_sample: float) -> np.ndarray
     """Random-walk (Wiener) phase noise."""
     walk = np.cumsum(np.random.randn(len(signal)) * np.deg2rad(std_deg_per_sample))
     return (signal * np.exp(1j * walk)).astype(np.complex64)
+
+
+def modulate_bits(
+    bits: np.ndarray,
+    modulation: str,
+    symbol_rate: float,
+    sample_rate: float,
+    snr_db: float | None = None,
+    freq_offset_hz: float = 0.0,
+    deviation_hz: float | None = None,
+) -> np.ndarray:
+    """Modulate a given bit stream (for end-to-end decoding tests).
+
+    *modulation* is ``"bpsk"``, ``"qpsk"`` (Gray, points at k·π/2),
+    ``"16qam"`` (the mapping of :func:`generate_qam16`) or ``"2fsk"``
+    (continuous phase, *deviation_hz* defaults to the symbol rate / 2).
+    """
+    b = np.asarray(bits, dtype=np.int64).reshape(-1)
+    sps = int(sample_rate / symbol_rate)
+    m = modulation.lower()
+    if m == "bpsk":
+        return _finish(_shape(2.0 * b - 1, sps), sample_rate, snr_db, freq_offset_hz)
+    if m == "qpsk":
+        g = b[: len(b) // 2 * 2].reshape(-1, 2)
+        gray_to_index = {_gray(i): i for i in range(4)}
+        idx = np.array([gray_to_index[v] for v in g[:, 0] * 2 + g[:, 1]])
+        return _finish(_shape(np.exp(2j * np.pi * idx / 4), sps), sample_rate, snr_db,
+                       freq_offset_hz)
+    if m == "16qam":
+        g = b[: len(b) // 4 * 4].reshape(-1, 4)
+        levels = np.array([-3.0, -1.0, 1.0, 3.0])
+        gray_to_index = np.array([{_gray(i): i for i in range(4)}[c] for c in range(4)])
+        s = (levels[gray_to_index[g[:, 0] * 2 + g[:, 1]]]
+             + 1j * levels[gray_to_index[g[:, 2] * 2 + g[:, 3]]]) / np.sqrt(10.0)
+        return _finish(_shape(s, sps), sample_rate, snr_db, freq_offset_hz)
+    if m == "2fsk":
+        dev = deviation_hz if deviation_hz is not None else symbol_rate / 2
+        f = np.repeat(2.0 * b - 1, sps) * dev
+        sig = np.exp(2j * np.pi * np.cumsum(f) / sample_rate)
+        return _finish(sig, sample_rate, snr_db, freq_offset_hz)
+    raise ValueError(f"unsupported modulation {modulation!r}")

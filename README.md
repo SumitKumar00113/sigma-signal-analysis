@@ -10,7 +10,8 @@
 > - demodulation of PSK/QAM/FSK/MSK/GMSK/ASK/OQPSK/π/4-DQPSK, and AM/FM/SSB to audio;
 > - correct handling of real (mono) WAV recordings;
 > - **blind identification of FEC codes and interleavers**;
-> - FEC decoding, de-interleaving and bit-stream correlation.
+> - FEC decoding, de-interleaving and bit-stream correlation;
+> - **one-click Auto-Analyse**: recording → parameters → demodulation → interleaver → FEC → decoded frames with sync word and header fields found blindly (GUI and `python -m src.auto_analyse`).
 
 ## Architecture
 
@@ -40,8 +41,11 @@ src/
 │   ├── fec_id.py          # Blind FEC identification (conv library/blind, RS, rank)
 │   ├── interleaver_id.py  # Blind interleaver identification (type, size, alignment)
 │   ├── gf2.py             # GF(2) rank / null space on bit-packed rows
-│   └── correlation.py     # Autocorrelation, sync-word search, framing
+│   ├── correlation.py     # Autocorrelation, sync-word search, framing
+│   ├── framing.py         # Automatic sync-word / frame / header discovery
+│   └── auto_decode.py     # One-click chain: mapping → interleaver → FEC → framing
 ├── gui/            # PySide6 main window, viewers, results dock, decoding workbench
+├── auto_analyse.py # Command-line one-click analysis of a recording
 ├── ml/             # Learned classifier: features, training data, model, hybrid, trainer
 └── reporting/      # JSON and HTML export (metadata, analysis, recovered bits)
 ```
@@ -83,6 +87,14 @@ src/
   - The strongest burst drives the main result. All bursts are outlined on the waterfall and listed in the navigator; click one to see its own constellation, bits and parameters.
   - Example: a 2.5 s recording with BPSK, 2-FSK, QPSK, OOK and 16-QAM bursts (some overlapping in time) is analysed in ≈ 2 s. Every burst is found, correctly classified and decoded error-free or nearly so.
 - **Blind Interleaver Identification**: block, diagonal and convolutional interleavers are found by a stride scan over the whole code library. Short-column block and short-branch convolutional interleavers use a comb search. Pseudo-random (LCG/NumPy) interleavers use a seed search. Each result gives the dimensions and the exact bit alignment, verified by restoring the code structure.
+- **One-click Auto-Analyse** (⚡ in the toolbar, *Analysis → Auto-Analyse*, Ctrl+Shift+R; or ⚡ *Auto-decode* in the decoding workbench for bits already demodulated). The chain runs in the background (cancellable) and fills in every workbench control, so each decision can be checked, changed and re-applied by hand:
+  1. The recording is analysed and demodulated as usual.
+  2. **Bit mapping**: the demodulator's QPSK/16-QAM phase ambiguity (swapped and inverted bits) and the OQPSK I/Q pairing are resolved by testing which mapping reveals a convolutional code.
+  3. **FEC on the stream as received**: if a code is already visible there is no interleaver. Otherwise the **interleaver** is identified and FEC identification is repeated on the de-interleaved stream.
+  4. **Decoding** of the whole stream: Viterbi, Reed-Solomon, Viterbi + RS or LDPC.
+  5. **Framing** on the most processed stream that shows it. Known sync words are tried first (CCSDS ASM and its 64-bit variant, CCSDS telecommand, POCSAG, IRIG-106, DMR, P25, Barker-13, MPEG-TS, GPS). Otherwise the sync word is **discovered blindly** as the bit pattern that recurs far more often than chance (Poisson test, false-alarm probability 10⁻⁶; idle fill is ignored). Around it, bits that stay constant from frame to frame are reported as fixed header fields, and fields that count up by one per frame as frame counters. The result is the frame length and the header/payload split, and every frame is listed with inversion undone.
+  - Example: CCSDS-framed data with a 16-bit frame counter, K = 7 rate 1/2 coded, block-interleaved 16 × 64, QPSK at 10 dB. One click gives the interleaver (16 × 64 and its alignment), the code, decoding (0.01 % channel bit errors corrected), then the ASM, the 1024-bit frames and the counter field.
+  - Command line: `python -m src.auto_analyse capture.sigmf-meta` (or `.wav`, or `.iq --fs 250000 --dtype cf32_le`). Options: `--json report.json` writes the whole report; `--save-bits out.bin` saves the final bit stream; `--no-interleaver` skips the slow interleaver search; `--ldpc` tries the installed standard LDPC codes.
 - **Synthetic Signal Generation**: Built-in generators for BPSK, QPSK, 16-QAM, and 2-FSK signals, with channel impairment models (AWGN, frequency offsets, IQ imbalances, phase noise) for testing and validation.
 
 ## Getting Started
@@ -142,6 +154,9 @@ sigma
 
 # Or directly
 python src/app.py
+
+# One-click analysis from the command line (or: sigma-auto …)
+python -m src.auto_analyse capture.wav --json report.json
 ```
 
 ### Running the Test Suite
@@ -204,7 +219,9 @@ At 4 dB the model fixes the rules' weak cases: 64-QAM 60 → 95 %, 4-ASK 30 → 
 - At very low SNR the classification can be right while demodulation fails: 4-ASK at 4 dB is often sliced as 2 levels, and the symbol rate of weak GMSK/FSK may not be recoverable. Enter the symbol rate manually in that case.
 - The SSB carrier is suppressed, so it is inferred as 300 Hz beyond the band edge. A tuning error shifts the pitch of the recovered audio but it stays intelligible.
 - OQPSK and M-PSK/QAM decisions carry the usual carrier-phase ambiguities (reported as warnings); OQPSK also has a one-symbol I/Q pairing ambiguity.
-- Future: deep-learning classifier for low-SNR / exotic modulations, burst segmentation, batch CLI.
+- Auto-decode looks for the code families listed above. Scrambled payloads (CCSDS/DVB randomisers) are not descrambled. An outer RS code behind a byte interleaver (e.g. the DVB-S Forney interleaver between RS and the convolutional code) is not found automatically. When nothing is present, the searches for an interleaver and an RS code take ≈ 10–15 s on 40 000 bits.
+- Blind sync discovery needs at least 3 frames and a sync word of ≥ 16 bits; shorter markers are only found from the known-sync library. Blindly, the sync word and the constant header bits that follow it cannot be told apart, and the polarity of a wholly inverted stream is unknown. Counters are reported with their constant leading zeros rounded to whole bytes.
+- Future: deep-learning classifier for low-SNR / exotic modulations.
 
 ## License
 

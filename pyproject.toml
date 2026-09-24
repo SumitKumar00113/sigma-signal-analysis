@@ -36,6 +36,7 @@ all = [
 
 [project.scripts]
 sigma = "src.app:main"
+sigma-auto = "src.auto_analyse:main"
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]
