@@ -199,7 +199,7 @@ def estimate_frequency_offset(
 def _spectral_lines(
     feature: np.ndarray,
     sample_rate: float,
-    min_rate_hz: float = 100.0,
+    min_rate_hz: float | None = None,
 ) -> list[tuple[float, float]]:
     """Find periodic lines in a real-valued feature signal.
 
@@ -223,7 +223,11 @@ def _spectral_lines(
         mag += np.abs(np.fft.fft(chunk * window))[: fft_size // 2]
     freqs = np.fft.fftfreq(fft_size, 1 / sample_rate)[: fft_size // 2]
 
-    # Ignore DC and rates below the minimum
+    # Ignore DC and rates below the minimum (default: 30 Hz, or fs/10000
+    # when the sample rate is high – low-rate HF modes such as 45.45/50 Bd
+    # RTTY must stay reachable)
+    if min_rate_hz is None:
+        min_rate_hz = max(30.0, sample_rate / 10_000.0)
     min_idx = int(np.searchsorted(freqs, min_rate_hz))
     mag[:min_idx] = 0.0
     if np.max(mag) == 0:
@@ -256,18 +260,43 @@ def _spectral_lines(
 
     out = [(float(freqs[p]), float(c)) for p, c in zip(peaks, conf, strict=True)]
 
-    # Prefer a fundamental over its harmonics: if a candidate at f has a
-    # comparably strong partner at f/2 the partner is the symbol rate and
-    # this one is the second harmonic of the transition pulse train.
-    boosted: list[tuple[float, float]] = []
-    for f, c in out:
-        for f2, c2 in out:
-            if abs(f2 - f / 2.0) / max(f, 1.0) < 0.01 and c2 >= 0.4 * c:
-                c = c * 0.6
-                break
-        boosted.append((f, c))
-    boosted.sort(key=lambda x: x[1], reverse=True)
-    return boosted
+    return _prefer_fundamentals(out)
+
+
+def _harmonic_order(f: float, base: float, max_order: int = 6, tol: float = 0.01) -> int:
+    """k if *f* ≈ k·*base* (2 ≤ k ≤ max_order), else 0."""
+    if base <= 0:
+        return 0
+    k = round(f / base)
+    if 2 <= k <= max_order and abs(f / base - k) < tol * k:
+        return int(k)
+    return 0
+
+
+def _prefer_fundamentals(lines: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    """Rank a fundamental above its harmonics.
+
+    Symbol-rate lines occur at multiples of the rate (the transition pulse
+    train has harmonics), never at fractions of it; on long real
+    recordings a harmonic is often the strongest single line.  A candidate
+    whose multiples are present takes the strength of its comb when it is
+    itself a real line – at least 30 % of the comb's strongest member and
+    either backed by two harmonics or at least 60 % as strong – and the
+    harmonics are ranked just below it.
+    """
+    conf = dict(lines)
+    order = sorted(conf)
+    for f in order:
+        harmonics = [g for g in order if g > f and _harmonic_order(g, f)]
+        if not harmonics:
+            continue
+        cmax = max(conf[g] for g in harmonics)
+        c = conf[f]
+        if c >= 0.3 * cmax and (len(harmonics) >= 2 or c >= 0.6 * cmax):
+            conf[f] = max(c, cmax)
+            for g in harmonics:
+                conf[g] = min(conf[g], 0.9 * cmax)
+    return sorted(conf.items(), key=lambda kv: (-kv[1], kv[0]))
 
 
 def estimate_symbol_rate_envelope(
@@ -537,7 +566,8 @@ def estimate_symbol_rate_candidates(
                     if key is not None:
                         merged[key] = min(1.0, merged[key] + 0.5 * min(c_e, c_i))
 
-    out = sorted(merged.items(), key=lambda kv: kv[1], reverse=True)
+    # A line one estimator reports can be a harmonic of another's
+    out = _prefer_fundamentals(list(merged.items()))
     return [(float(r), float(c)) for r, c in out[:5]]
 
 

@@ -3,12 +3,13 @@
 ``hybrid`` (the default when a model is available) keeps the explainable
 rule-based decision unless the evidence says the model knows better:
 
-* the rules found an unmodulated carrier → keep that (it is measured
-  directly);
+* the rules found an unmodulated carrier, or FM whose discriminator
+  output is an audio tone → keep that (it is measured directly);
 * the rules found nothing (UNKNOWN) and the model is reasonably sure →
   take the model's answer;
-* rules and model disagree, the model is very sure, and it gives the
-  rules' answer almost no probability → take the model's answer;
+* rules and model disagree, the model is very sure (of something other
+  than "Unknown"), and it gives the rules' answer almost no probability
+  → take the model's answer;
 * otherwise keep the rules, listing the model's view as evidence.
 
 The thresholds were checked on independently generated signals with
@@ -60,10 +61,13 @@ def combine(rule: ClassificationResult, pred: Prediction | None, mode: str) -> D
 
     probs = dict(pred.ranked)
     rule_mod = canonical_label(rule.modulation)
-    unmodulated = any("Unmodulated carrier" in e for e in rule.evidence)
+    from src.dsp.classification import AUDIO_TONE_EVIDENCE
 
-    if unmodulated:
-        # Measured directly (one carrier line, flat envelope): keep it
+    # Measured directly, and outside the model's (synthetic) training data:
+    # one carrier line with a flat envelope, or FM carrying an audio tone
+    direct = any("Unmodulated carrier" in e or AUDIO_TONE_EVIDENCE in e for e in rule.evidence)
+
+    if direct:
         rules_decision.evidence.append(_model_text(pred))
         return rules_decision
 
@@ -81,7 +85,10 @@ def combine(rule: ClassificationResult, pred: Prediction | None, mode: str) -> D
         rules_decision.evidence.append(_model_text(pred) + " Agrees with the rules.")
         return rules_decision
 
-    if pred.probability >= OVERRIDE_TOP and probs.get(rule_mod, 0.0) <= OVERRIDE_RULE_MAX:
+    # "Unknown" (the model's noise class) never replaces a concrete answer
+    # the rules measured
+    if pred.modulation != ModulationType.UNKNOWN and pred.probability >= OVERRIDE_TOP \
+            and probs.get(rule_mod, 0.0) <= OVERRIDE_RULE_MAX:
         model_decision.evidence.insert(
             0, f"The learned model overrides the rule-based answer ({rule.modulation.value}, "
                f"which it rates {probs.get(rule_mod, 0.0):.0%}).")

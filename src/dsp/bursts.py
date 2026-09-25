@@ -53,6 +53,7 @@ class BurstConfig:
     merge_freq_hz: float | None = None   # None: 2 % of the sample rate (≥ 3 bins)
     max_bursts: int = 64
     continuous_fraction: float = 0.9     # active this much of the time → continuous
+    continuous_energy: float = 0.9       # … and holding this share of all burst energy
     refine_edges: bool = True
 
 
@@ -97,7 +98,7 @@ class BurstDetection:
     @property
     def intermittent(self) -> bool:
         """Bursty, or several signals: analyse the bursts one by one."""
-        return bool(self.bursts) and (not self.continuous or len(self.bursts) > 1)
+        return bool(self.bursts) and not self.continuous
 
 
 def _auto_fft(sample_rate: float) -> int:
@@ -226,8 +227,15 @@ def detect_bursts(samples: np.ndarray, sample_rate: float,
     bursts.sort(key=lambda b: (b.start_sample, b.center_hz))
     bursts = bursts[: cfg.max_bursts]
     duty = float(active.mean()) if n_frames else 0.0
-    continuous = len(bursts) == 1 and \
-        bursts[0].num_samples >= cfg.continuous_fraction * len(x)
+    # Continuous: one signal present (almost) all the time that also holds
+    # nearly all the burst energy – short weak detections around it (HF
+    # atmospherics, faint stations) do not make the recording intermittent
+    continuous = False
+    if bursts:
+        energy = [b.num_samples * 10 ** (b.snr_db / 10) for b in bursts]
+        main = bursts[int(np.argmax(energy))]
+        continuous = (main.num_samples >= cfg.continuous_fraction * len(x)
+                      and max(energy) >= cfg.continuous_energy * sum(energy))
     return BurstDetection(bursts, duty, continuous, float(floor_global), nfft)
 
 

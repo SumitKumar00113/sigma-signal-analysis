@@ -551,9 +551,13 @@ class MainWindow(QMainWindow):
                 d.symbols, f"{d.modulation.value}  ·  EVM {d.evm_percent:.1f}%"
             )
             src = f"{d.modulation.value} @ {d.symbol_rate_hz:,.0f} baud"
-            if result.primary_burst is not None and result.bursts:
+            bits, n_bursts = AnalysisPipeline.train_bits(result)
+            if n_bursts > 1:
+                src += f", {n_bursts} bursts of the same signal joined"
+            elif result.primary_burst is not None and result.bursts:
                 src += f", burst {result.bursts[result.primary_burst].index + 1}"
-            self._decoding_panel.set_bits(d.bits, src, d.bits_per_symbol, d.modulation)
+            self._decoding_panel.set_bits(bits, src, d.bits_per_symbol, d.modulation,
+                                         d.evm_percent)
         else:
             self._constellation_viewer.clear()
             self._decoding_panel.clear()

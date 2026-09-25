@@ -200,11 +200,33 @@ DBPSK is reported as BPSK: differential encoding is a property of the data, not 
 
 | SNR | Rules only | Learned model only | Hybrid |
 |---|---|---|---|
-| 4 dB | 86 % | 99 % | **99 %** |
-| 8 dB | 99 % | 100 % | **100 %** |
+| 4 dB | 88 % | 98 % | **99 %** |
+| 8 dB | 95 % | 100 % | **99 %** |
 | 15 dB | 100 % | 100 % | **100 %** |
 
 At 4 dB the model fixes the rules' weak cases: 64-QAM 60 → 95 %, 4-ASK 30 → 100 %, GMSK 45 → 100 %, MSK 60 → 100 %. In hybrid mode the rules' explainable evidence is kept, and every override by the model is stated in the result.
+
+### Real off-air recordings
+
+`python scripts/eval_offair.py <folder>` runs the one-click analysis on a set of genuine SDR# baseband recordings (16-bit stereo I/Q WAV). The recordings are not in the repository. Each result is checked against the true parameters of the service, which were measured from the signal itself:
+
+| Recording | What it is | Result |
+|---|---|---|
+| NAVTEX, 518 kHz (8 min) | SITOR-B, 2-FSK 100 Bd, 170 Hz shift | 2-FSK, 100.0 Bd, EVM 9.7 %; no false FEC or framing |
+| DWD RTTY (7 min) | 2-FSK 50 Bd, 450 Hz shift, asynchronous | 2-FSK on the 100 Bd half-element grid, with a note that the element rate is 50 Bd |
+| RS41 radiosonde, 403 MHz (8 min) | GFSK 4800 Bd, one frame per second | 2-FSK 4798.9 Bd; 15 bursts decoded together; **RS41 header found in every frame with 0 bit errors** |
+| NOAA-18 APT, 137.9 MHz | FM with a 2400 Hz AM subcarrier | FM, peak deviation ≈ 15 kHz, audio for an APT decoder |
+| SSTV, 145.8 MHz | narrow-band FM carrying SSTV tones | FM, audio for an SSTV decoder |
+| NO-84 packets, 145.8 MHz | FM bursts carrying audio tones | all 11 bursts FM, deviation ≈ 8.9 kHz |
+| NOAA-15 SARP-3, 1544.5 MHz (15 min) | residual-carrier PM, 2400 bps, ±35 kHz Doppler | **not supported** (see limitations) |
+
+These recordings exposed problems that synthetic tests had not. Each is now fixed and covered by a regression test in `tests/unit/test_offair_fixes.py`:
+- **Symbol-rate harmonics.** On long recordings a harmonic (3 × or 5 × the rate) can be the strongest line. Candidates are now ranked by their harmonic comb, so the fundamental wins. The lowest rate searched is now 30 Hz instead of 100 Hz, so 45–50 Bd teleprinter modes are reachable.
+- **Impulsive HF noise** around a continuous transmission split it into dozens of "bursts". A signal present ≥ 90 % of the time and holding ≥ 90 % of the burst energy is now treated as continuous.
+- **False FEC.** Repetition, time diversity and half-element sampling satisfy some parity checks of a convolutional code by chance. A candidate is now rejected when a trial Viterbi decode leaves > 12 % channel errors, or leaves far more errors than the demodulator's EVM allows.
+- **False framing.** Idle and phasing patterns repeat. Frames must now be ≥ 64 bits long with a varying payload, idle patterns with periods up to 8 bits are ignored, and frame counters must pass a significance test.
+- **FM carrying audio** (APT subcarrier, SSTV, AFSK) was classified as FSK/PSK: a sampled tone looks like "2 levels". The FM discriminator output is now checked first. Audio has narrow spectral lines (≥ 10 % of its power; digital modes ≤ 4 %) and a continuous distribution (keyed FSK sits on two levels ≥ 80 % of the time). Such a signal is FM, and the learned model cannot overrule this: it never saw such signals in training.
+- **One frame per burst** (radiosondes, packet radio): bursts from the same transmitter (same modulation, carrier and rate) are now decoded together. The RS41 header was added to the known sync words.
 
 ## Limitations & Next Steps
 
@@ -221,6 +243,9 @@ At 4 dB the model fixes the rules' weak cases: 64-QAM 60 → 95 %, 4-ASK 30 → 
 - OQPSK and M-PSK/QAM decisions carry the usual carrier-phase ambiguities (reported as warnings); OQPSK also has a one-symbol I/Q pairing ambiguity.
 - Auto-decode looks for the code families listed above. Scrambled payloads (CCSDS/DVB randomisers) are not descrambled. An outer RS code behind a byte interleaver (e.g. the DVB-S Forney interleaver between RS and the convolutional code) is not found automatically. When nothing is present, the searches for an interleaver and an RS code take ≈ 10–15 s on 40 000 bits.
 - Blind sync discovery needs at least 3 frames and a sync word of ≥ 16 bits; shorter markers are only found from the known-sync library. Blindly, the sync word and the constant header bits that follow it cannot be told apart, and the polarity of a wholly inverted stream is unknown. Counters are reported with their constant leading zeros rounded to whole bytes.
+- Satellite downlinks with strong Doppler drift (hundreds of Hz/s, e.g. NOAA SARP at L-band) are not tracked, and residual-carrier PM (split-phase) has no demodulator yet. Such recordings are misclassified.
+- Protocol layers above framing are not decoded: SITOR-B / Baudot text, AX.25/APRS inside AFSK audio, RS41 descrambling, and APT/SSTV images. The analysis stops at the demodulated bits, the frames or the audio.
+- Only the first 10 million samples of a recording are analysed (40 s at 250 kHz).
 - Future: deep-learning classifier for low-SNR / exotic modulations.
 
 ## License

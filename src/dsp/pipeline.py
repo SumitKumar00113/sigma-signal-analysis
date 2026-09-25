@@ -84,6 +84,32 @@ def _rate_for_family(x: np.ndarray, fs: float, mod: ModulationType, current: flo
     return float(best)
 
 
+def element_rate_note(bits: np.ndarray, symbol_rate: float,
+                      max_single: float = 0.03) -> str | None:
+    """Warn when no element is shorter than two symbols.
+
+    Random data has about half its runs one symbol long.  If almost none
+    are, the transitions sit on a grid finer than the signalling element –
+    typically asynchronous teleprinter (RTTY/Baudot) whose 1.5-element stop
+    pulse puts transitions at half-element positions – and the modulation
+    rate is half the grid rate that was measured.
+    """
+    b = np.asarray(bits).reshape(-1)
+    if len(b) < 2000 or symbol_rate <= 0:
+        return None
+    edges = np.flatnonzero(np.diff(b.astype(np.int8)) != 0)
+    runs = np.diff(edges)
+    if len(runs) < 200:
+        return None
+    single = float(np.mean(runs == 1))
+    if single > max_single:
+        return None
+    return (f"Only {single:.1%} of the runs are one symbol long (random data: ≈ 50 %): the "
+            f"signalling element is 2 symbols, i.e. the modulation rate is about "
+            f"{symbol_rate / 2:,.2f} Bd – typical of asynchronous RTTY with 1.5-element stop "
+            f"pulses. The bits were sampled on the {symbol_rate:,.1f} Bd half-element grid.")
+
+
 @dataclass
 class PipelineConfig:
     """Configuration for the analysis pipeline."""
@@ -341,6 +367,9 @@ class AnalysisPipeline:
                     coarse_cfo_hz=result.frequency_offset_hz,
                 )
                 analysis.warnings.extend(result.demod.warnings)
+                note = element_rate_note(result.demod.bits, symbol_rate)
+                if note and result.demod.bits_per_symbol == 1:
+                    analysis.warnings.append(note)
                 if analog and result.demod.audio is not None:
                     d = result.demod
                     analysis.parameters.append(ParameterEstimate(
@@ -420,6 +449,41 @@ class AnalysisPipeline:
                f"{', '.join(kinds)}). Showing burst {primary.index + 1} "
                f"({primary.region.start_time_sec:.3f}–{primary.region.end_time_sec:.3f} s, "
                f"{primary.offset_hz:+,.0f} Hz); pick a region to see another.")
+
+    @staticmethod
+    def burst_train(result: PipelineResult, burst: BurstAnalysis | None = None
+                    ) -> list[BurstAnalysis]:
+        """Bursts from the same transmitter as *burst* (default: the shown
+        one), in time order: same modulation, carrier within a quarter of
+        its bandwidth, symbol rate within 1 %.  A radiosonde or a packet
+        radio sends one frame per burst; their bits belong together."""
+        if not result.bursts:
+            return []
+        ref = burst or result.bursts[result.primary_burst or 0]
+        if ref.result.demod is None:
+            return [ref]
+        rs = ref.result.analysis.symbol_rate_hz
+        tol_hz = max(ref.burst.bandwidth_hz / 4, 1.0)
+
+        def same(b: BurstAnalysis) -> bool:
+            d = b.result.demod
+            return (d is not None and d.audio is None and b.modulation == ref.modulation
+                    and abs(b.burst.center_hz - ref.burst.center_hz) <= tol_hz
+                    and abs(b.result.analysis.symbol_rate_hz - rs) <= 0.01 * max(rs, 1.0))
+        return sorted([b for b in result.bursts if b is ref or same(b)],
+                      key=lambda b: b.start_sample)
+
+    @staticmethod
+    def train_bits(result: PipelineResult) -> tuple[np.ndarray, int]:
+        """Demodulated bits of the shown signal – all bursts of its train
+        joined in time order – and the number of bursts joined."""
+        d = result.demod
+        if d is None:
+            return np.zeros(0, dtype=np.uint8), 0
+        train = AnalysisPipeline.burst_train(result) if result.bursts else []
+        if len(train) <= 1:
+            return d.bits, 1
+        return np.concatenate([b.result.demod.bits for b in train]).astype(np.uint8), len(train)
 
     @staticmethod
     def adopt_burst(result: PipelineResult, burst: BurstAnalysis) -> None:
