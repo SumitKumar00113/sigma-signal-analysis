@@ -26,6 +26,7 @@ redo by hand in the Decoding panel) any decision.
 
 from __future__ import annotations
 
+import math
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -49,6 +50,9 @@ ProgressCallback = Callable[[float, str], None]
 CancelCheck = Callable[[], bool]
 
 MAPPING_Z_THRESHOLD = 8.0
+# Distance from a constellation point to its decision boundary, relative
+# to the rms symbol amplitude (so that BER ≈ Q(factor / EVM))
+_EVM_FACTOR = {1: 1.0, 2: 1.0, 3: 0.54, 4: 0.45, 6: 0.22}
 MAPPING_SCAN_BITS = 20_000
 STAGE_ORDER = ("raw", "deinterleaved", "decoded")
 
@@ -145,6 +149,23 @@ def resolve_mapping(bits: np.ndarray, bits_per_symbol: int, offset_rails: bool =
         choice.z_score = identity_z
         return bits, choice
     return fn(bits).astype(np.uint8), choice
+
+
+def expected_ber_from_evm(evm_percent: float, bits_per_symbol: int = 1) -> float | None:
+    """Channel bit-error rate the demodulator's EVM implies (Gaussian
+    errors, Gray mapping) – a sanity bound for identified codes."""
+    if not evm_percent or evm_percent <= 0:
+        return None
+    arg = _EVM_FACTOR.get(bits_per_symbol, 0.5) / (evm_percent / 100.0)
+    return 0.5 * math.erfc(arg / math.sqrt(2.0))
+
+
+def _plausible_ber(measured: float | None, expected: float | None) -> bool:
+    """A code's implied channel BER must not be far above what the signal
+    quality allows (partial structure leaves many "errors")."""
+    if measured is None or expected is None or not math.isfinite(measured):
+        return True
+    return measured <= max(0.02, 10.0 * expected + 0.01)
 
 
 # ---------------------------------------------------------------------------
@@ -247,14 +268,18 @@ def auto_decode(
     ldpc_codes: list | None = None,
     pseudo_random_blocks: tuple[int, ...] = (),
     search_interleaver: bool = True,
+    expected_ber: float | None = None,
     progress_cb: ProgressCallback | None = None,
     cancel_check: CancelCheck | None = None,
     **_: object,
 ) -> AutoDecodeResult:
     """Run the full decoding chain on demodulated *bits* (see module docstring).
 
-    *ldpc_codes* defaults to the installed standard codes.  Accepts the
-    ``progress_cb`` / ``cancel_check`` keywords of the GUI worker.
+    *ldpc_codes* defaults to the installed standard codes.  *expected_ber*
+    (e.g. from :func:`expected_ber_from_evm`) rejects a convolutional code
+    that would imply far more channel errors than the signal quality
+    allows.  Accepts the ``progress_cb`` / ``cancel_check`` keywords of
+    the GUI worker.
     """
     t0 = time.perf_counter()
     res = AutoDecodeResult()
@@ -306,8 +331,20 @@ def auto_decode(
         from src.decoding.ldpc_library import load_installed
 
         codes = load_installed()
-    fec = identify_fec(x, ldpc_codes=codes, progress_cb=prog(0.05, 0.35),
-                       cancel_check=cancel_check)
+    rejected: list[str] = []
+
+    def check(f: FECIdentification) -> FECIdentification:
+        cv = f.conv
+        if cv is not None and not _plausible_ber(cv.viterbi_ber, expected_ber):
+            rejected.append(f"{cv.name} rejected: it implies {cv.viterbi_ber:.1%} channel "
+                            f"errors but the signal quality implies ≈ {expected_ber:.2%}")
+            f.conv, f.rs = None, None
+            f.fec_type = FECType.NONE
+            f.notes.append(rejected[-1])
+        return f
+
+    fec = check(identify_fec(x, ldpc_codes=codes, progress_cb=prog(0.05, 0.35),
+                             cancel_check=cancel_check))
     stream = x
 
     # 3 · Interleaver
@@ -326,8 +363,8 @@ def auto_decode(
             stream = deinterleave(x[b.offset:], b.spec).astype(np.uint8)
             res.stages["deinterleaved"] = stream
             res.steps.append(ChainStep("Interleaver", "found", b.describe()))
-            fec = identify_fec(stream, ldpc_codes=codes, progress_cb=prog(0.75, 0.85),
-                               cancel_check=cancel_check)
+            fec = check(identify_fec(stream, ldpc_codes=codes, progress_cb=prog(0.75, 0.85),
+                                     cancel_check=cancel_check))
         else:
             detail = ("none found (no library convolutional code restored)"
                       if il.kind != InterleaverType.NONE else "none")
@@ -353,6 +390,9 @@ def auto_decode(
         detail = fec.summary().splitlines()[0] if fec else "not run"
         if fec is not None and fec.fec_type == FECType.NONE:
             detail = "no FEC detected (uncoded, unsupported code or too many errors)"
+        rej = [n for n in (fec.notes if fec else []) if "ejected" in n]
+        if rej:
+            detail += "; " + "; ".join(rej)
         res.steps.append(ChainStep("FEC", "none", detail))
 
     # 5 · Framing: the most processed stream that shows it

@@ -1130,6 +1130,9 @@ class FECIdentification:
         return "\n".join(lines)
 
 
+MAX_CONV_CHANNEL_BER = 0.12     # a code leaving more errors than this is not accepted
+
+
 def identify_fec(
     bits: np.ndarray,
     try_blind: bool = True,
@@ -1166,13 +1169,27 @@ def identify_fec(
         if progress_cb:
             progress_cb(0.3, "Blind convolutional generator search")
         cands = blind_conv_search(x, cancel_check=cancel_check)
-    result.conv_candidates = cands
 
-    if cands:
-        best = cands[0]
+    # A trial Viterbi decode must explain the stream: partial structure
+    # (repetition, time diversity, framing) can satisfy some parity checks
+    # of a code that is not there, and then leaves many "channel errors"
+    confirmed = []
+    for c in cands[:3]:
         if progress_cb:
             progress_cb(0.45, "Confirming with Viterbi")
-        best.viterbi_ber = viterbi_confirm(x, best)
+        c.viterbi_ber = viterbi_confirm(x, c)
+        if not (c.viterbi_ber > MAX_CONV_CHANNEL_BER):
+            confirmed.append(c)
+    if cands and not confirmed:
+        result.notes.append(
+            f"Rejected {cands[0].name} (z={cands[0].z_score:.0f}): a trial Viterbi decode "
+            f"leaves {cands[0].viterbi_ber:.0%} channel errors, so the parity structure is "
+            "only partial (e.g. repetition or framing), not this code.")
+    cands = confirmed + [c for c in cands if c not in confirmed and c.viterbi_ber is None]
+    result.conv_candidates = cands
+
+    if confirmed:
+        best = confirmed[0]
         result.conv = best
         result.fec_type = FECType.CONVOLUTIONAL
         if try_rs and not cancelled():

@@ -71,6 +71,9 @@ KNOWN_SYNC_WORDS: tuple[KnownSync, ...] = (
     KnownSync("DMR base-station data sync", "0xDFF57D75DF5D"),
     KnownSync("DMR base-station voice sync", "0x755FD7DF75F7"),
     KnownSync("APCO P25 frame sync", "0x5575F5FF77FF"),
+    # On-air bit order (bytes 10 B6 CA 11 22 96 12 F8, LSB first)
+    KnownSync("Vaisala RS41 radiosonde header",
+              "0000100001101101010100111000100001000100011010010100100000011111"),
     KnownSync("Barker-13", "1111100110101"),
     KnownSync("MPEG-TS sync byte", "0x47", 188 * 8),
     KnownSync("GPS LNAV TLM preamble", "0x8B", 300),
@@ -80,9 +83,12 @@ BLIND_WINDOWS = (32, 24, 16)
 MIN_FRAMES = 3
 CONSTANT_AGREEMENT = 0.9        # a column is "constant" if ≥90 % of frames agree
 MAX_CONSTANT_BITS = 512
+MIN_FRAME_BITS = 64            # shorter "frames" are repeating patterns (idle, phasing)
+MAX_CONSTANT_PAYLOAD = 0.9      # payload columns constant across frames: a repeated message
 COUNTER_SEARCH_BITS = 64        # look for counters this far past the constant block
 COUNTER_WIDTHS = range(4, 33)
 COUNTER_FRACTION = 0.5          # of frame-to-frame steps equal to +1 (chance: 2^-width)
+COUNTER_FALSE_ALARM = 1e-4      # … and significant against chance over all positions/widths
 
 
 # ---------------------------------------------------------------------------
@@ -182,9 +188,10 @@ def _periodic(words: np.ndarray, w: int, max_period: int) -> np.ndarray:
     return out
 
 
-def _low_complexity(words: np.ndarray, w: int, max_period: int = 4) -> np.ndarray:
-    """Windows that are idle fill (``0000…``, ``0101…``) over at least ¾ of
-    their length – e.g. the end of a zero run followed by data."""
+def _low_complexity(words: np.ndarray, w: int, max_period: int = 8) -> np.ndarray:
+    """Windows that are idle fill (``0000…``, ``0101…``, a repeated byte)
+    over at least ¾ of their length – e.g. the end of a zero run followed
+    by data."""
     part = (3 * w) // 4
     return (_periodic(words, w, max_period)
             | _periodic(words >> (w - part), part, max_period)
@@ -378,8 +385,11 @@ def _find_counters(frames: list[Frame], start: int, max_len: int) -> list[Header
             for j in range(w):
                 v = (v << 1) | m[:, pos + j]
             d = np.mod(np.diff(v), 1 << w)
-            frac = float(np.mean(d == 1))
-            if frac >= COUNTER_FRACTION:
+            hits = int(np.sum(d == 1))
+            frac = hits / len(d)
+            trials = COUNTER_SEARCH_BITS * len(COUNTER_WIDTHS)
+            p_chance = float(stats.binom.sf(hits - 1, len(d), 2.0 ** -w)) * trials
+            if frac >= COUNTER_FRACTION and p_chance <= COUNTER_FALSE_ALARM:
                 best = (w, int(v[0]))
             elif best is not None:
                 break
@@ -442,6 +452,20 @@ def _describe(x: np.ndarray, occ: _Occurrences, result: FramingResult) -> None:
     sync.best_period = period
     regular = bool(period) and frac >= 0.8
     frame_bits = period if regular else None
+    if period and period < MIN_FRAME_BITS:
+        result.notes.append(f"A {sync_len}-bit pattern repeats every {period} bits: idle, "
+                            "phasing or a repeated character, not a frame structure.")
+        return
+    if period:
+        # The payload must carry data: mostly constant columns = a repeated message
+        span = np.arange(len(block), min(period, len(block) + 512))
+        if len(span):
+            vals, valid = _columns(x, pos, np.array([m.inverted for m in sync.matches]), span)
+            constant = sum(_is_constant(vals[:, j], valid[:, j])[0] for j in range(len(span)))
+            if constant > MAX_CONSTANT_PAYLOAD * len(span):
+                result.notes.append(f"Pattern repeats every {period} bits with an almost "
+                                    "constant payload: a repeated message or idle sequence.")
+                return
 
     frames = split_frames(x, sync, frame_bits=frame_bits)
     counters = _find_counters(frames, len(block), COUNTER_SEARCH_BITS)

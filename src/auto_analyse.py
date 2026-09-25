@@ -164,12 +164,17 @@ def main(argv: list[str] | None = None) -> int:
         log(f"Demodulated  {d.num_symbols:,} symbols → {d.num_bits:,} bits, "
             f"EVM {d.evm_percent:.1f}%")
         if not args.no_decode:
-            from src.decoding.auto_decode import auto_decode
+            from src.decoding.auto_decode import auto_decode, expected_ber_from_evm
 
+            bits, n_bursts = AnalysisPipeline.train_bits(result)
+            if n_bursts > 1:
+                log(f"Decoding {n_bursts} bursts of this signal together ({len(bits):,} bits)")
             log("Decoding chain:")
-            chain = auto_decode(d.bits, d.bits_per_symbol, d.modulation,
+            chain = auto_decode(bits, d.bits_per_symbol, d.modulation,
                                 ldpc_codes=None if args.ldpc else [],
-                                search_interleaver=not args.no_interleaver)
+                                search_interleaver=not args.no_interleaver,
+                                expected_ber=expected_ber_from_evm(d.evm_percent,
+                                                                   d.bits_per_symbol))
             for line in chain.summary().splitlines():
                 log(f"  {line}")
             for f in chain.framing.fields:

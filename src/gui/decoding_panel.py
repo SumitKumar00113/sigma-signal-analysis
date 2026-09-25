@@ -51,7 +51,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.core.enums import FECType, InterleaverType, ModulationType
-from src.decoding.auto_decode import AutoDecodeResult, auto_decode
+from src.decoding.auto_decode import AutoDecodeResult, auto_decode, expected_ber_from_evm
 from src.decoding.correlation import (
     bit_autocorrelation,
     bits_to_hex,
@@ -108,6 +108,7 @@ class DecodingPanel(QWidget):
         self._busy = False
         self._bits_per_symbol = 1
         self._modulation: ModulationType | None = None
+        self._expected_ber: float | None = None
         self._auto_worker: Worker | None = None
         self.last_auto_result: AutoDecodeResult | None = None
         self._setup_ui()
@@ -443,16 +444,20 @@ class DecodingPanel(QWidget):
     # ==================================================================
 
     def set_bits(self, bits: np.ndarray, source: str = "", bits_per_symbol: int = 1,
-                 modulation: ModulationType | None = None) -> None:
+                 modulation: ModulationType | None = None,
+                 evm_percent: float | None = None) -> None:
         """Load a fresh raw bit stream (clears derived stages).
 
         *bits_per_symbol* and *modulation* let auto-decode resolve the
-        demodulator's bit-mapping ambiguity.
+        demodulator's bit-mapping ambiguity; *evm_percent* bounds the
+        channel error rate an identified code may imply.
         """
         self._stages = {"raw": np.asarray(bits, dtype=np.uint8).reshape(-1)}
         self._source_label = source
         self._bits_per_symbol = bits_per_symbol
         self._modulation = modulation
+        self._expected_ber = (expected_ber_from_evm(evm_percent, bits_per_symbol)
+                              if evm_percent else None)
         self.last_auto_result = None
         for lbl in (self._il_result, self._fec_result, self._sync_result, self._period_label,
                     self._auto_result):
@@ -952,7 +957,7 @@ class DecodingPanel(QWidget):
             blocks = ()
         worker = Worker(auto_decode, raw.copy(), self._bits_per_symbol, self._modulation,
                         ldpc_codes=list(self._ldpc_codes.values()),
-                        pseudo_random_blocks=blocks)
+                        pseudo_random_blocks=blocks, expected_ber=self._expected_ber)
         worker.signals.progress.connect(self._on_auto_progress)
         worker.signals.finished.connect(self._on_auto_decoded)
         worker.signals.error.connect(self._on_auto_error)

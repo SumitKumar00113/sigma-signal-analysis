@@ -272,6 +272,72 @@ def _result(mod: ModulationType, confidence: float, alternatives: list[Modulatio
     return ClassificationResult(mod, float(confidence), cands, feats, [evidence], symbols)
 
 
+AUDIO_TONE_MIN_HZ = 300.0       # below this the discriminator output is data spectrum
+# Share of discriminator power in narrow tones: digital ≲ 0.04, AFSK ≈ 0.15
+AUDIO_TONE_FRACTION = 0.1
+AUDIO_TONE_MAX_BILEVEL = 0.7    # keyed FSK sits on two levels (real captures ≥ 0.83)
+AUDIO_TONE_EVIDENCE = "FM discriminator output is dominated by an audio tone"
+
+
+def discriminator_tonality(samples: np.ndarray, sample_rate: float,
+                           min_hz: float = AUDIO_TONE_MIN_HZ) -> tuple[float, float]:
+    """Share of the FM-discriminator output's power in its (up to three)
+    strongest narrow spectral lines above *min_hz*, and the strongest
+    line's frequency.
+
+    Keyed FSK/CPM gives a random-data discriminator output with a smooth
+    spectrum (≲ 0.1).  FM carrying audio – a subcarrier (NOAA APT's
+    2400 Hz), AFSK or SSTV tones, a test tone – has sharp lines (≳ 0.3).
+    """
+    from scipy import signal as sp_signal
+
+    from src.dsp.measurements import bandlimit_to_signal, compute_instantaneous_frequency
+
+    if len(samples) < 4096:
+        return 0.0, 0.0
+    f = compute_instantaneous_frequency(bandlimit_to_signal(samples, sample_rate), sample_rate)
+    f = f - np.mean(f)
+    nper = int(min(len(f) // 8, 2 ** int(np.log2(max(256.0, sample_rate / 5.0)))))
+    freqs, p = sp_signal.welch(f, sample_rate, nperseg=nper)
+    p[:3] = 0.0                                      # residual carrier offset / drift
+    total = float(p.sum())
+    if total <= 0:
+        return 0.0, 0.0
+    # Tones are looked for above min_hz, but measured against all the power
+    # (low-rate data keeps most of its power below).  Only the power a line
+    # adds above the local smooth spectrum counts, so a data spectrum's hump
+    # scores ≈ 0 while two or three AFSK / SSTV tones add up.
+    background = sp_signal.medfilt(p, kernel_size=61)
+    excess = np.clip(p - background, 0.0, None)
+    excess = np.where(freqs >= min_hz, excess, 0.0)
+    peaks, _ = sp_signal.find_peaks(excess, distance=8)
+    if len(peaks) == 0:
+        return 0.0, 0.0
+    top = peaks[np.argsort(excess[peaks])[::-1][:3]]
+    share = sum(float(excess[max(0, k - 3): k + 4].sum()) for k in top) / total
+    return share, float(freqs[top[0]])
+
+
+def discriminator_bilevel(samples: np.ndarray, sample_rate: float) -> float:
+    """Fraction of the FM-discriminator output within 20 % (of its 5–95 %
+    range) of either extreme.
+
+    Keyed FSK is a square wave between two frequencies (≳ 0.8 on real
+    captures, even when the data is periodic and so looks tonal); an
+    audio tone is a sinusoid, which spends ≈ 40 % of its time there.
+    """
+    from src.dsp.measurements import bandlimit_to_signal, compute_instantaneous_frequency
+
+    if len(samples) < 1024:
+        return 0.0
+    f = compute_instantaneous_frequency(bandlimit_to_signal(samples, sample_rate), sample_rate)
+    lo, hi = np.percentile(f, [5, 95])
+    r = hi - lo
+    if r <= 0:
+        return 0.0
+    return float(np.mean((np.abs(f - lo) < 0.2 * r) | (np.abs(f - hi) < 0.2 * r)))
+
+
 def _classify_constant_envelope(samples: np.ndarray, sample_rate: float, symbol_rate: float,
                                 rate_conf: float, cfo_hz: float,
                                 feats: dict[str, float]) -> ClassificationResult:
@@ -434,6 +500,22 @@ def classify_modulation(
     # ---- 1: discrete carrier line, message in the envelope -----------------
     # (checked first: lightly modulated AM has a nearly flat envelope, while
     # narrowband FM also has a carrier line but its message is in frequency)
+    # FM carrying audio (subcarrier, AFSK, SSTV): the discriminator output
+    # is tones – continuous-valued, unlike FSK sending periodic data.
+    # Checked before the envelope branches – fading and burst edges spoil
+    # the flat envelope of a real FM packet – and before the FSK level
+    # test, which a sampled tone passes (it is bimodal).
+    # Digital and amplitude modulations score ≲ 0.04 here.
+    tonal, tone_hz = discriminator_tonality(samples, sample_rate)
+    feats["fm_tonality"] = tonal
+    if tonal >= AUDIO_TONE_FRACTION and \
+            discriminator_bilevel(samples, sample_rate) < AUDIO_TONE_MAX_BILEVEL:
+        return _result(
+            ModulationType.FM, 0.85, [ModulationType.GFSK, ModulationType.FSK2],
+            f"{AUDIO_TONE_EVIDENCE} at {tone_hz:,.0f} Hz ({tonal:.0%} of its power in narrow "
+            "lines) → analog FM carrying audio (subcarrier, AFSK or SSTV tones); demodulate "
+            "to audio.", feats)
+
     if feats["carrier_fraction"] >= 0.15:
         feats["am_fm_ratio"] = am_fm_ratio(band, sample_rate, cfo_hz)
         # A strongly fluctuating envelope (keyed carrier) can never be FM
