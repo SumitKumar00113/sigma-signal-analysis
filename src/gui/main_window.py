@@ -34,6 +34,7 @@ from src.gui.input_wizard import InputWizard
 from src.gui.recording_overview import RecordingOverview
 from src.gui.results_panel import ResultsPanel
 from src.gui.viewers.constellation_viewer import ConstellationViewer
+from src.gui.viewers.image_viewer import ImageViewer
 from src.gui.viewers.spectrum_viewer import SpectrumViewer
 from src.gui.viewers.time_viewer import TimeViewer
 from src.gui.viewers.waterfall_viewer import WaterfallViewer
@@ -94,6 +95,10 @@ class MainWindow(QMainWindow):
         self._save_audio_action.triggered.connect(self._on_save_audio)
         self._save_audio_action.setEnabled(False)
         file_menu.addAction(self._save_audio_action)
+        self._save_image_action = QAction("Save Decoded &Image…", self)
+        self._save_image_action.triggered.connect(self._on_save_image)
+        self._save_image_action.setEnabled(False)
+        file_menu.addAction(self._save_image_action)
 
         file_menu.addSeparator()
 
@@ -208,6 +213,7 @@ class MainWindow(QMainWindow):
         self._spectrum_viewer = SpectrumViewer()
         self._waterfall_viewer = WaterfallViewer()
         self._constellation_viewer = ConstellationViewer()
+        self._image_viewer = ImageViewer()
         self._decoding_panel = DecodingPanel()
         self._decoding_panel.auto_decode_finished.connect(self._on_auto_decode_finished)
 
@@ -416,6 +422,20 @@ class MainWindow(QMainWindow):
         except Exception as exc:  # noqa: BLE001
             self._log(f"✗ Audio export failed: {exc}")
 
+    def _on_save_image(self) -> None:
+        img = self._image_viewer.image
+        if img is None:
+            return
+        path, _ = QFileDialog.getSaveFileName(self, "Save Decoded Image", "", "PNG image (*.png)")
+        if not path:
+            return
+        if not path.lower().endswith(".png"):
+            path += ".png"
+        from src.decoding.apt import write_png
+
+        write_png(path, img)
+        self._log(f"✓ Saved {img.shape[1]} × {img.shape[0]} image to {path}")
+
     def _on_export(self) -> None:
         if self._current_metadata is None:
             QMessageBox.information(self, "Export", "No recording loaded.")
@@ -539,12 +559,29 @@ class MainWindow(QMainWindow):
             self._auto_after_analysis = False
             self._start_auto_decode(result)
 
+    def _show_image(self, result: PipelineResult) -> None:
+        """Decoded NOAA APT image: its own tab while there is one."""
+        idx = self._central_stack.indexOf(self._image_viewer)
+        apt = result.apt
+        if apt is None:
+            self._image_viewer.clear()
+            if idx >= 0:
+                self._central_stack.removeTab(idx)
+            self._save_image_action.setEnabled(False)
+            return
+        self._image_viewer.set_image(apt.image, apt.describe() + "  ·  channel A | channel B")
+        if idx < 0 and self._central_stack.indexOf(self._waterfall_viewer) >= 0:
+            self._central_stack.addTab(self._image_viewer, "🛰 Image")
+        self._save_image_action.setEnabled(True)
+        self._log(f"  🛰 {apt.describe()} — see the Image tab")
+
     def _show_result(self, result: PipelineResult) -> None:
         """Results panel, constellation, bits and burst overlay for the
         current main result (after an analysis or a burst selection)."""
         self._results.update_result(result)
         has_audio = result.demod is not None and result.demod.audio is not None
         self._save_audio_action.setEnabled(has_audio)
+        self._show_image(result)
         if result.demod is not None and not has_audio:
             d = result.demod
             self._constellation_viewer.set_symbols(
@@ -660,6 +697,11 @@ class MainWindow(QMainWindow):
             self._log("⚡ Auto-Analyse: nothing was demodulated, so there is no bit stream.")
             return
         if d.audio is not None:
+            if result.apt is not None:
+                self._central_stack.setCurrentWidget(self._image_viewer)
+                self._log("⚡ Auto-Analyse: NOAA APT weather image decoded — Image tab "
+                          "(File → Save Decoded Image…).")
+                return
             self._log(f"⚡ Auto-Analyse: {d.modulation.value} is analog — the demodulated "
                       "audio is ready (File → Save Demodulated Audio…); no bits to decode.")
             return

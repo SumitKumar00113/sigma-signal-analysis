@@ -122,6 +122,7 @@ class PipelineConfig:
     measure_symbol_rate: bool = True
     classify: bool = True
     demodulate: bool = True
+    decode_images: bool = True                 # NOAA APT from FM with a 2400 Hz subcarrier
 
     # Overrides: when set, skip the estimate and use the analyst's value
     modulation_override: ModulationType | None = None
@@ -188,6 +189,7 @@ class PipelineResult:
     stage_errors: dict[str, str] = field(default_factory=dict)
     burst_detection: BurstDetection | None = None
     bursts: list[BurstAnalysis] = field(default_factory=list)
+    apt: Any = None                          # src.decoding.apt.APTImage (NOAA weather image)
     primary_burst: int | None = None        # index into ``bursts`` shown as the main result
 
 
@@ -370,6 +372,8 @@ class AnalysisPipeline:
                 note = element_rate_note(result.demod.bits, symbol_rate)
                 if note and result.demod.bits_per_symbol == 1:
                     analysis.warnings.append(note)
+                if modulation == ModulationType.FM and cfg.decode_images:
+                    self._try_apt(processed, fs, result)   # all of it, not the cap
                 if analog and result.demod.audio is not None:
                     d = result.demod
                     analysis.parameters.append(ParameterEstimate(
@@ -449,6 +453,23 @@ class AnalysisPipeline:
                f"{', '.join(kinds)}). Showing burst {primary.index + 1} "
                f"({primary.region.start_time_sec:.3f}–{primary.region.end_time_sec:.3f} s, "
                f"{primary.offset_hz:+,.0f} Hz); pick a region to see another.")
+
+    def _try_apt(self, x: np.ndarray, fs: float, result: PipelineResult) -> None:
+        """FM carrying a 2400 Hz tone: try to decode a NOAA APT image."""
+        from src.decoding.apt import decode_apt, looks_like_apt
+
+        feats = result.classification.features if result.classification else {}
+        if not looks_like_apt(feats.get("fm_tone_hz", 0.0)):
+            return
+        self._emit_progress(0.8, "Decoding NOAA APT image...")
+        try:
+            apt = decode_apt(x, fs)
+        except Exception as exc:  # noqa: BLE001 – an image is a bonus, never fatal
+            result.stage_errors["apt"] = str(exc)
+            return
+        if apt.found:
+            result.apt = apt
+            result.analysis.warnings.append(apt.describe())
 
     @staticmethod
     def burst_train(result: PipelineResult, burst: BurstAnalysis | None = None

@@ -454,3 +454,34 @@ def modulate_bits(
         sig = np.exp(2j * np.pi * np.cumsum(f) / sample_rate)
         return _finish(sig, sample_rate, snr_db, freq_offset_hz)
     raise ValueError(f"unsupported modulation {modulation!r}")
+
+
+def generate_apt(image_a: np.ndarray, image_b: np.ndarray, sample_rate: float,
+                 snr_db: float | None = None, deviation_hz: float = 17_000.0,
+                 clock_error: float = 0.0) -> np.ndarray:
+    """NOAA APT: lines of sync A | space | image A (909) | telemetry and the
+    same for channel B, AM on a 2400 Hz subcarrier, FM-modulated.
+
+    *image_a*, *image_b*: (lines, 909) arrays in 0…1.  *clock_error*
+    stretches time (a receiver sample-rate error, e.g. 1e-4 = 100 ppm).
+    """
+    lines = len(image_a)
+    sync_a = [0] * 4 + [1, 1, 0, 0] * 7 + [0] * 7
+    sync_b = [0] * 3 + [1, 1, 1, 0, 0] * 7 + [0]            # 39 words
+    words = np.zeros((lines, 2080))
+    for i in range(lines):
+        marker = 1.0 if (i // 120) % 2 else 0.0          # minute markers in the space
+        words[i, :39] = sync_a
+        words[i, 39:86] = marker
+        words[i, 86:995] = image_a[i]
+        words[i, 995:1040] = (i // 8 % 8) / 7.0          # telemetry wedges
+        words[i, 1040:1079] = sync_b
+        words[i, 1079:1126] = 1.0 - marker
+        words[i, 1126:2035] = image_b[i]
+        words[i, 2035:2080] = (i // 8 % 8) / 7.0
+    level = words.reshape(-1)
+    t = np.arange(int(len(level) / 4160.0 * sample_rate)) / sample_rate * (1 + clock_error)
+    amp = np.interp(t * 4160.0, np.arange(len(level)), level)
+    audio = (0.1 + 0.9 * amp) * np.sin(2 * np.pi * 2400.0 * t)
+    sig = np.exp(2j * np.pi * deviation_hz * np.cumsum(audio) / sample_rate)
+    return _finish(sig, sample_rate, snr_db, 0.0)
