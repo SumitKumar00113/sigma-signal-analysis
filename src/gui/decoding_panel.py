@@ -89,6 +89,7 @@ from src.gui.workers import Worker, WorkerPool
 
 _MAX_DISPLAY_CHARS = 60_000
 _STAGES = ("raw", "deinterleaved", "decoded")
+_TEXT_VIEW = "text"             # decoded teleprinter text, when there is some
 
 
 def _small(label: QLabel, color: str = TEXT_SECONDARY) -> None:
@@ -111,6 +112,7 @@ class DecodingPanel(QWidget):
         self._expected_ber: float | None = None
         self._auto_worker: Worker | None = None
         self.last_auto_result: AutoDecodeResult | None = None
+        self._text = ""
         self._setup_ui()
         self._refresh_view_combo()
 
@@ -459,6 +461,7 @@ class DecodingPanel(QWidget):
         self._expected_ber = (expected_ber_from_evm(evm_percent, bits_per_symbol)
                               if evm_percent else None)
         self.last_auto_result = None
+        self._text = ""
         for lbl in (self._il_result, self._fec_result, self._sync_result, self._period_label,
                     self._auto_result):
             lbl.setText("")
@@ -469,6 +472,7 @@ class DecodingPanel(QWidget):
 
     def clear(self) -> None:
         self._stages = {}
+        self._text = ""
         self._refresh_view_combo()
         self._status.setText("No bits loaded — run analysis on a recording first.")
 
@@ -485,9 +489,11 @@ class DecodingPanel(QWidget):
         for key in _STAGES:
             if key in self._stages:
                 self._view_combo.addItem(key)
-        # Show the most processed stage available
-        for key in reversed(_STAGES):
-            if key in self._stages:
+        if self._text:
+            self._view_combo.addItem(_TEXT_VIEW)
+        # Show the most processed result available
+        for key in (_TEXT_VIEW, *reversed(_STAGES)):
+            if key in self._stages or (key == _TEXT_VIEW and self._text):
                 self._view_combo.setCurrentText(key)
                 break
         self._view_combo.blockSignals(False)
@@ -499,6 +505,9 @@ class DecodingPanel(QWidget):
         self._status.setText("  |  ".join(parts) + src if parts else "No bits loaded.")
 
     def _render_bits(self) -> None:
+        if self._view_combo.currentText() == _TEXT_VIEW:
+            self._bits_view.setPlainText(self._text)
+            return
         bits = self.current_bits()
         if len(bits) == 0:
             self._bits_view.setPlainText("")
@@ -997,6 +1006,7 @@ class DecodingPanel(QWidget):
         """Show a chain result: stages, filled-in controls and frames."""
         self.last_auto_result = res
         self._stages = {k: v for k, v in res.stages.items() if k in _STAGES}
+        self._text = res.text.text if res.text is not None else ""
 
         il = res.step("Interleaver")
         if res.interleaver is not None and res.interleaver.best is not None:
@@ -1030,7 +1040,7 @@ class DecodingPanel(QWidget):
             self._set_result(self._sync_result, fr.summary(), None)
 
         self._refresh_view_combo()
-        if res.framing_stage in self._stages:
+        if not self._text and res.framing_stage in self._stages:
             self._view_combo.setCurrentText(res.framing_stage)
         self._update_status()
         ok = res.framing.found or res.decode_ok
@@ -1038,6 +1048,11 @@ class DecodingPanel(QWidget):
                          True if ok else None)
 
     def _save_bits(self) -> None:
+        if self._view_combo.currentText() == _TEXT_VIEW:
+            path, _ = QFileDialog.getSaveFileName(self, "Save decoded text", "", "Text (*.txt)")
+            if path:
+                Path(path).write_text(self._text, encoding="utf-8")
+            return
         bits = self.current_bits()
         if len(bits) == 0:
             return

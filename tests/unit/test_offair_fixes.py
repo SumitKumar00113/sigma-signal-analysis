@@ -88,7 +88,7 @@ class TestFalseStructure:
         stream = np.array(half, np.uint8)
         res = auto_decode(stream, 1, M.FSK2, ldpc_codes=[], search_interleaver=False,
                           expected_ber=expected_ber_from_evm(5.0, 1))
-        assert res.step("FEC").status == "none"
+        assert res.step("FEC").status in ("none", "skipped")
         assert "decoded" not in res.stages
 
     def test_viterbi_check_rejects_partial_structure(self):

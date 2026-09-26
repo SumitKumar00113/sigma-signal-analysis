@@ -19,6 +19,10 @@ analyst input:
 5. **Framing** (:func:`~src.decoding.framing.analyse_framing`): sync word,
    frame length and header fields on the most processed stream that shows
    framing.
+Asynchronous Baudot/ITA2 teleprinter (RTTY) is recognised right after
+step 1 by its start/stop elements and decoded to text
+(:func:`~src.decoding.baudot.detect_baudot`); it carries no FEC or frame
+sync, so steps 2–5 are skipped for it.
 
 Each step records what it found and why, so the analyst can check (and
 redo by hand in the Decoding panel) any decision.
@@ -34,6 +38,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from src.core.enums import FECType, InterleaverType, ModulationType
+from src.decoding.baudot import BaudotResult, detect_baudot
 from src.decoding.fec_id import (
     FECIdentification,
     apply_rs_candidate,
@@ -55,6 +60,7 @@ MAPPING_Z_THRESHOLD = 8.0
 _EVM_FACTOR = {1: 1.0, 2: 1.0, 3: 0.54, 4: 0.45, 6: 0.22}
 MAPPING_SCAN_BITS = 20_000
 STAGE_ORDER = ("raw", "deinterleaved", "decoded")
+TEXT_MAX_BITS = 400_000          # Baudot search is a Python loop
 
 
 # ---------------------------------------------------------------------------
@@ -194,6 +200,7 @@ class AutoDecodeResult:
     decode_ok: bool | None = None
     framing: FramingResult = field(default_factory=FramingResult)
     framing_stage: str = ""
+    text: BaudotResult | None = None
     elapsed_s: float = 0.0
     cancelled: bool = False
 
@@ -323,7 +330,24 @@ def auto_decode(
     else:
         res.steps.append(ChainStep("Bit mapping", "none", "as demodulated"))
 
-    # 2 · FEC on the stream as received
+    # 2 · Asynchronous teleprinter (RTTY): characters framed by start/stop
+    # elements, no FEC.  Checked first – the half-element sampling doubles
+    # every element, which would otherwise pass for a repetition code
+    if bits_per_symbol == 1 and not cancelled():
+        report(0.03, "Looking for teleprinter (Baudot) characters")
+        bt = detect_baudot(x[:TEXT_MAX_BITS])
+        if bt.found:
+            res.text = bt
+            why = "asynchronous teleprinter: start/stop characters"
+            res.steps.append(ChainStep("Interleaver", "skipped", why))
+            res.steps.append(ChainStep("FEC", "skipped", why + " carry no FEC"))
+            res.steps.append(ChainStep("Framing", "skipped", why + " frame each character"))
+            first = next((ln.strip() for ln in bt.text.splitlines() if ln.strip()), "")
+            res.steps.append(ChainStep("Text", "found",
+                                       f"{bt.describe()}; begins “{first[:60]}”"))
+            return finish()
+
+    # 3 · FEC on the stream as received
     if cancelled():
         return finish()
     codes = ldpc_codes
@@ -347,7 +371,7 @@ def auto_decode(
                              cancel_check=cancel_check))
     stream = x
 
-    # 3 · Interleaver
+    # 4 · Interleaver
     if _has_code(fec):
         res.steps.append(ChainStep("Interleaver", "none",
                                    "code visible without de-interleaving"))
@@ -371,7 +395,7 @@ def auto_decode(
             res.steps.append(ChainStep("Interleaver", "none", detail))
     res.fec = fec
 
-    # 4 · FEC decoding
+    # 5 · FEC decoding
     if cancelled():
         return finish()
     if _has_code(fec):
@@ -395,7 +419,7 @@ def auto_decode(
             detail += "; " + "; ".join(rej)
         res.steps.append(ChainStep("FEC", "none", detail))
 
-    # 5 · Framing: the most processed stream that shows it
+    # 6 · Framing: the most processed stream that shows it
     if cancelled():
         return finish()
     report(0.92, "Searching for frame sync and header")
@@ -422,4 +446,5 @@ def auto_decode(
     else:
         res.steps.append(ChainStep("Framing", "none",
                                    "no sync word found in " + ", ".join(tried) + " bits"))
+
     return finish()

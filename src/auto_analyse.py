@@ -108,6 +108,8 @@ def _report(result, chain) -> dict:
                 "fields": [{"kind": h.kind, "start": h.start, "length": h.length,
                             "description": h.description} for h in f.fields],
             } if f.found else {"found": False},
+            "text": {"format": chain.text.describe(), "characters": chain.text.characters,
+                     "content": chain.text.text} if chain.text else None,
             "elapsed_s": round(chain.elapsed_s, 2),
         }
     return out
@@ -129,6 +131,7 @@ def main(argv: list[str] | None = None) -> int:
                     help="also try the installed standard LDPC codes (~/.sigma/ldpc)")
     ap.add_argument("--save-bits", type=Path, help="write the final bit stream (packed bytes)")
     ap.add_argument("--json", type=Path, help="write the report as JSON")
+    ap.add_argument("--text-out", type=Path, help="write decoded teleprinter text")
     ap.add_argument("-q", "--quiet", action="store_true")
     args = ap.parse_args(argv)
 
@@ -179,6 +182,12 @@ def main(argv: list[str] | None = None) -> int:
                 log(f"  {line}")
             for f in chain.framing.fields:
                 log(f"    bits {f.start}–{f.start + f.length - 1}: {f.description}")
+            if chain.text is not None:
+                lines = [ln for ln in chain.text.text.splitlines() if ln.strip()]
+                log(f"Decoded text ({chain.text.characters:,} characters, first "
+                    f"{min(len(lines), 25)} lines):")
+                for ln in lines[:25]:
+                    log(f"  | {ln}")
             for fr in chain.framing.frames[:3]:
                 from src.decoding.correlation import bits_to_hex
 
@@ -190,6 +199,12 @@ def main(argv: list[str] | None = None) -> int:
         bits = np.asarray(bits, dtype=np.uint8)
         args.save_bits.write_bytes(np.packbits(bits[: len(bits) // 8 * 8]).tobytes())
         log(f"Saved {len(bits):,} bits to {args.save_bits}")
+    if args.text_out:
+        if chain is not None and chain.text is not None:
+            args.text_out.write_text(chain.text.text, encoding="utf-8")
+            log(f"Saved decoded text to {args.text_out}")
+        else:
+            log("No teleprinter text decoded; nothing written to --text-out.")
     if args.json:
         args.json.write_text(json.dumps(_report(result, chain), indent=2), encoding="utf-8")
         log(f"Report written to {args.json}")

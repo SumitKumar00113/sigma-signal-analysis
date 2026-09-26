@@ -43,6 +43,7 @@ src/
 │   ├── gf2.py             # GF(2) rank / null space on bit-packed rows
 │   ├── correlation.py     # Autocorrelation, sync-word search, framing
 │   ├── framing.py         # Automatic sync-word / frame / header discovery
+│   ├── baudot.py          # Asynchronous ITA2 / Baudot (RTTY) → text
 │   └── auto_decode.py     # One-click chain: mapping → interleaver → FEC → framing
 ├── gui/            # PySide6 main window, viewers, results dock, decoding workbench
 ├── auto_analyse.py # Command-line one-click analysis of a recording
@@ -92,6 +93,7 @@ src/
   2. **Bit mapping**: the demodulator's QPSK/16-QAM phase ambiguity (swapped and inverted bits) and the OQPSK I/Q pairing are resolved by testing which mapping reveals a convolutional code.
   3. **FEC on the stream as received**: if a code is already visible there is no interleaver. Otherwise the **interleaver** is identified and FEC identification is repeated on the de-interleaved stream.
   4. **Decoding** of the whole stream: Viterbi, Reed-Solomon, Viterbi + RS or LDPC.
+  - **Teleprinter text**: asynchronous Baudot/ITA2 (RTTY) is recognised by its start/stop elements, right after the bit mapping. The polarity, the stop length (1, 1.5 or 2 elements) and the sampling grid are found automatically, and the letters/figures shifts are applied. The text appears in the workbench (*View → text*) and in the CLI (`--text-out file.txt`). No FEC or frame search is run on such a signal.
   5. **Framing** on the most processed stream that shows it. Known sync words are tried first (CCSDS ASM and its 64-bit variant, CCSDS telecommand, POCSAG, IRIG-106, DMR, P25, Barker-13, MPEG-TS, GPS). Otherwise the sync word is **discovered blindly** as the bit pattern that recurs far more often than chance (Poisson test, false-alarm probability 10⁻⁶; idle fill is ignored). Around it, bits that stay constant from frame to frame are reported as fixed header fields, and fields that count up by one per frame as frame counters. The result is the frame length and the header/payload split, and every frame is listed with inversion undone.
   - Example: CCSDS-framed data with a 16-bit frame counter, K = 7 rate 1/2 coded, block-interleaved 16 × 64, QPSK at 10 dB. One click gives the interleaver (16 × 64 and its alignment), the code, decoding (0.01 % channel bit errors corrected), then the ASM, the 1024-bit frames and the counter field.
   - Command line: `python -m src.auto_analyse capture.sigmf-meta` (or `.wav`, or `.iq --fs 250000 --dtype cf32_le`). Options: `--json report.json` writes the whole report; `--save-bits out.bin` saves the final bit stream; `--no-interleaver` skips the slow interleaver search; `--ldpc` tries the installed standard LDPC codes.
@@ -213,7 +215,7 @@ At 4 dB the model fixes the rules' weak cases: 64-QAM 60 → 95 %, 4-ASK 30 → 
 | Recording | What it is | Result |
 |---|---|---|
 | NAVTEX, 518 kHz (8 min) | SITOR-B, 2-FSK 100 Bd, 170 Hz shift | 2-FSK, 100.0 Bd, EVM 9.7 %; no false FEC or framing |
-| DWD RTTY (7 min) | 2-FSK 50 Bd, 450 Hz shift, asynchronous | 2-FSK on the 100 Bd half-element grid, with a note that the element rate is 50 Bd |
+| DWD RTTY (7 min) | 2-FSK 50 Bd, 450 Hz shift, asynchronous | 2-FSK on the 100 Bd half-element grid, with a note that the element rate is 50 Bd. **Decoded to text**: 2,658 characters, 99.8 % with valid stop elements. It is the DWD Hamburg (DDH47) Baltic Sea forecast, "SEEWETTERBERICHT FUER DIE OSTSEE … 28.02.23" |
 | RS41 radiosonde, 403 MHz (8 min) | GFSK 4800 Bd, one frame per second | 2-FSK 4798.9 Bd; 15 bursts decoded together; **RS41 header found in every frame with 0 bit errors** |
 | NOAA-18 APT, 137.9 MHz | FM with a 2400 Hz AM subcarrier | FM, peak deviation ≈ 15 kHz, audio for an APT decoder |
 | SSTV, 145.8 MHz | narrow-band FM carrying SSTV tones | FM, audio for an SSTV decoder |
@@ -244,7 +246,7 @@ These recordings exposed problems that synthetic tests had not. Each is now fixe
 - Auto-decode looks for the code families listed above. Scrambled payloads (CCSDS/DVB randomisers) are not descrambled. An outer RS code behind a byte interleaver (e.g. the DVB-S Forney interleaver between RS and the convolutional code) is not found automatically. When nothing is present, the searches for an interleaver and an RS code take ≈ 10–15 s on 40 000 bits.
 - Blind sync discovery needs at least 3 frames and a sync word of ≥ 16 bits; shorter markers are only found from the known-sync library. Blindly, the sync word and the constant header bits that follow it cannot be told apart, and the polarity of a wholly inverted stream is unknown. Counters are reported with their constant leading zeros rounded to whole bytes.
 - Satellite downlinks with strong Doppler drift (hundreds of Hz/s, e.g. NOAA SARP at L-band) are not tracked, and residual-carrier PM (split-phase) has no demodulator yet. Such recordings are misclassified.
-- Protocol layers above framing are not decoded: SITOR-B / Baudot text, AX.25/APRS inside AFSK audio, RS41 descrambling, and APT/SSTV images. The analysis stops at the demodulated bits, the frames or the audio.
+- Of the protocol layers above framing, only asynchronous Baudot (RTTY) text is decoded. Not decoded: SITOR-B (NAVTEX) text, AX.25/APRS inside AFSK audio, RS41 descrambling, and APT/SSTV images. The analysis stops at the demodulated bits, the frames or the audio.
 - Only the first 10 million samples of a recording are analysed (40 s at 250 kHz).
 - Future: deep-learning classifier for low-SNR / exotic modulations.
 

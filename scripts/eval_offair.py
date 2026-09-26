@@ -10,7 +10,8 @@ standard parameters of the service):
 capture    signal                                            checked
 ========== ================================================= =================
 navtex     NAVTEX (SITOR-B), 2-FSK 100 Bd, 170 Hz shift      modulation, rate
-rtty       DWD RTTY, 2-FSK 50 Bd, 450 Hz shift, async         modulation, rate
+rtty       DWD RTTY, 2-FSK 50 Bd, 450 Hz shift, async         modulation, rate,
+                                                              Baudot text
 no84       NO-84 packets: FM carrying audio tones             modulation
 radiosonde Vaisala RS41, 2-FSK 4800 Bd, one frame per second  modulation, rate,
                                                               RS41 header
@@ -39,7 +40,7 @@ from src.dsp.pipeline import AnalysisPipeline  # noqa: E402
 
 TRUTH = {
     "navtex": dict(mod={M.FSK2}, rates=(100.0,), sync=None),
-    "rtty": dict(mod={M.FSK2}, rates=(50.0, 100.0), sync=None),
+    "rtty": dict(mod={M.FSK2}, rates=(50.0, 100.0), sync=None, text=True),
     "no84": dict(mod={M.FM}, rates=(), sync=None),
     "radiosonde": dict(mod={M.FSK2, M.GFSK}, rates=(4800.0,),
                        sync="Vaisala RS41 radiosonde header"),
@@ -71,6 +72,8 @@ def evaluate(path: Path) -> dict:
                             expected_ber=expected_ber_from_evm(d.evm_percent, d.bits_per_symbol))
         f = chain.framing
         row["framing"] = (f"{f.sync_name or 'blind'} ×{len(f.frames)}" if f.found else "none")
+        if chain.text is not None:
+            row["framing"] = f"Baudot text, {chain.text.characters:,} characters"
         row["fec"] = chain.step("FEC").status
     else:
         row["fec"] = "—"
@@ -80,7 +83,9 @@ def evaluate(path: Path) -> dict:
             ok &= any(abs(a.symbol_rate_hz - r) <= 0.01 * r for r in t["rates"])
         if t["sync"]:
             ok &= t["sync"] in row["framing"]
-        ok &= row["fec"] in ("none", "—")          # none of these carries a library code
+        if t.get("text"):
+            ok &= row["framing"].startswith("Baudot text")
+        ok &= row["fec"] in ("none", "skipped", "—")      # none carries a library code
         row["ok"] = bool(ok)
     row["seconds"] = time.perf_counter() - t0
     return row
