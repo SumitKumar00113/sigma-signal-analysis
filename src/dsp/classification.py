@@ -508,6 +508,7 @@ def classify_modulation(
     # Digital and amplitude modulations score ≲ 0.04 here.
     tonal, tone_hz = discriminator_tonality(samples, sample_rate)
     feats["fm_tonality"] = tonal
+    feats["fm_tone_hz"] = tone_hz
     if tonal >= AUDIO_TONE_FRACTION and \
             discriminator_bilevel(samples, sample_rate) < AUDIO_TONE_MAX_BILEVEL:
         return _result(

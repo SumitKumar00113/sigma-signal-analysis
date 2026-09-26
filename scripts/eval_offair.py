@@ -16,7 +16,7 @@ no84       NO-84 packets: FM carrying audio tones             modulation
 radiosonde Vaisala RS41, 2-FSK 4800 Bd, one frame per second  modulation, rate,
                                                               RS41 header
 sstv       SSTV on narrow-band FM                             modulation
-apt        NOAA-18 APT: FM with a 2400 Hz AM subcarrier       modulation
+apt        NOAA-18 APT: FM with a 2400 Hz AM subcarrier       modulation, image
 SDRSharp…  NOAA-15 SARP-3: residual-carrier PM, 2400 bps,     (not supported:
            ±35 kHz Doppler                                    reported only)
 ========== ================================================= =================
@@ -45,7 +45,7 @@ TRUTH = {
     "radiosonde": dict(mod={M.FSK2, M.GFSK}, rates=(4800.0,),
                        sync="Vaisala RS41 radiosonde header"),
     "sstv": dict(mod={M.FM}, rates=(), sync=None),
-    "apt": dict(mod={M.FM}, rates=(), sync=None),
+    "apt": dict(mod={M.FM}, rates=(), sync=None, image=True),
     "SDRSharp": dict(mod=None, rates=(), sync=None),
 }
 
@@ -77,12 +77,16 @@ def evaluate(path: Path) -> dict:
         row["fec"] = chain.step("FEC").status
     else:
         row["fec"] = "—"
+    if res.apt is not None:
+        row["framing"] = f"APT image, {res.apt.lines} lines ({res.apt.sync_quality:.0%} sync)"
     if t["mod"] is not None:
         ok = a.modulation in t["mod"]
         if t["rates"]:
             ok &= any(abs(a.symbol_rate_hz - r) <= 0.01 * r for r in t["rates"])
         if t["sync"]:
             ok &= t["sync"] in row["framing"]
+        if t.get("image"):
+            ok &= res.apt is not None and res.apt.sync_quality >= 0.9
         if t.get("text"):
             ok &= row["framing"].startswith("Baudot text")
         ok &= row["fec"] in ("none", "skipped", "—")      # none carries a library code

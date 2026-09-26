@@ -34,8 +34,11 @@ from src.core.models import RecordingMetadata
 RAW_SUFFIXES = {".iq", ".raw", ".bin", ".cfile", ".dat", ".cf32", ".cs16", ".cs8", ".cu8"}
 
 
+MAX_SAMPLES = 10_000_000
+
+
 def load_recording(path: Path, fs: float | None = None, dtype: str = "cf32_le",
-                   wav_mode: str = "auto", max_samples: int = 10_000_000,
+                   wav_mode: str = "auto", max_samples: int = MAX_SAMPLES,
                    log=print) -> tuple[np.ndarray, RecordingMetadata]:
     """Read samples and metadata from a WAV, SigMF or raw IQ file."""
     from src.ingestion.raw_iq_reader import RawIQReader
@@ -89,6 +92,9 @@ def _report(result, chain) -> dict:
         "occupied_bandwidth_hz": round(float(result.occupied_bandwidth_hz), 1),
         "bursts": len(result.bursts),
     }
+    if result.apt is not None:
+        out["apt"] = {"lines": result.apt.lines, "sync_quality": round(result.apt.sync_quality, 3),
+                      "line_rate_hz": round(result.apt.line_rate_hz, 5)}
     d = result.demod
     if d is not None:
         out["demod"] = {"symbols": int(d.num_symbols), "bits": int(d.num_bits),
@@ -132,6 +138,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--save-bits", type=Path, help="write the final bit stream (packed bytes)")
     ap.add_argument("--json", type=Path, help="write the report as JSON")
     ap.add_argument("--text-out", type=Path, help="write decoded teleprinter text")
+    ap.add_argument("--image-out", type=Path,
+                    help="where to save a decoded NOAA APT image (default: <file>_apt.png)")
     ap.add_argument("-q", "--quiet", action="store_true")
     args = ap.parse_args(argv)
 
@@ -163,6 +171,24 @@ def main(argv: list[str] | None = None) -> int:
         log("Nothing demodulated.")
     elif d.audio is not None:
         log(f"Analog signal: {len(d.audio) / d.audio_rate_hz:.1f} s of audio demodulated.")
+        if result.apt is not None:
+            apt = result.apt
+            if len(samples) >= MAX_SAMPLES:            # analysis saw only the start
+                from src.decoding.apt import decode_apt
+
+                log("NOAA APT found; decoding the whole recording for the image…")
+                full, _ = load_recording(args.file, args.fs, args.dtype, args.wav_mode,
+                                         max_samples=10 ** 12, log=lambda *_: None)
+                full_apt = decode_apt(full, meta.sample_rate_hz)
+                if full_apt.found:
+                    apt = result.apt = full_apt
+            from src.decoding.apt import write_png
+
+            out = args.image_out or Path(f"{args.file.stem}_apt.png")
+            write_png(out, apt.image)
+            log(f"{apt.describe()}")
+            log(f"Image ({apt.image.shape[1]} × {apt.image.shape[0]}, channel A | channel B) "
+                f"saved to {out}")
     else:
         log(f"Demodulated  {d.num_symbols:,} symbols → {d.num_bits:,} bits, "
             f"EVM {d.evm_percent:.1f}%")
