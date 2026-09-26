@@ -49,6 +49,7 @@ from src.decoding.framing import FramingResult, analyse_framing
 from src.decoding.interleaver_id import CodeOracle, InterleaverIdentification, identify_interleaver
 from src.decoding.interleaving import deinterleave
 from src.decoding.ldpc import ldpc_decode_stream
+from src.decoding.sitor import SitorResult, detect_sitor_b
 from src.decoding.viterbi import viterbi_decode
 
 ProgressCallback = Callable[[float, str], None]
@@ -200,7 +201,7 @@ class AutoDecodeResult:
     decode_ok: bool | None = None
     framing: FramingResult = field(default_factory=FramingResult)
     framing_stage: str = ""
-    text: BaudotResult | None = None
+    text: BaudotResult | SitorResult | None = None     # decoded teleprinter text
     elapsed_s: float = 0.0
     cancelled: bool = False
 
@@ -330,21 +331,33 @@ def auto_decode(
     else:
         res.steps.append(ChainStep("Bit mapping", "none", "as demodulated"))
 
-    # 2 · Asynchronous teleprinter (RTTY): characters framed by start/stop
-    # elements, no FEC.  Checked first – the half-element sampling doubles
-    # every element, which would otherwise pass for a repetition code
+    # 2 · Teleprinter text, checked first: its character structure would
+    # otherwise pass for code structure.
+    #   SITOR-B / NAVTEX – 7-bit constant-ratio characters, each sent twice
+    #   RTTY – asynchronous Baudot; the half-element sampling doubles every
+    #          element, which looks like a repetition code
     if bits_per_symbol == 1 and not cancelled():
-        report(0.03, "Looking for teleprinter (Baudot) characters")
-        bt = detect_baudot(x[:TEXT_MAX_BITS])
-        if bt.found:
-            res.text = bt
-            why = "asynchronous teleprinter: start/stop characters"
-            res.steps.append(ChainStep("Interleaver", "skipped", why))
-            res.steps.append(ChainStep("FEC", "skipped", why + " carry no FEC"))
-            res.steps.append(ChainStep("Framing", "skipped", why + " frame each character"))
-            first = next((ln.strip() for ln in bt.text.splitlines() if ln.strip()), "")
+        report(0.03, "Looking for teleprinter characters (SITOR-B, Baudot)")
+        sitor = detect_sitor_b(x[:TEXT_MAX_BITS])
+        text: BaudotResult | SitorResult | None = sitor if sitor.found else None
+        why = "SITOR-B (NAVTEX) characters" if text is not None else ""
+        if text is None:
+            bt = detect_baudot(x[:TEXT_MAX_BITS])
+            if bt.found:
+                text, why = bt, "asynchronous Baudot (RTTY) characters"
+        if text is not None:
+            res.text = text
+            note = f"teleprinter signal – {why}"
+            res.steps.append(ChainStep("Interleaver", "skipped", note))
+            res.steps.append(ChainStep("FEC", "skipped", note + " (their own error "
+                                       "detection / repetition only)"))
+            res.steps.append(ChainStep("Framing", "skipped", note + " frame themselves"))
+            msgs = getattr(text, "messages", [])
+            first = (f"ZCZC {msgs[0].header}" if msgs else
+                     next((ln.strip().strip("~") for ln in text.text.splitlines()
+                           if ln.strip().strip("~")), ""))
             res.steps.append(ChainStep("Text", "found",
-                                       f"{bt.describe()}; begins “{first[:60]}”"))
+                                       f"{text.describe()}; begins “{first[:60]}”"))
             return finish()
 
     # 3 · FEC on the stream as received
