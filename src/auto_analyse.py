@@ -115,7 +115,11 @@ def _report(result, chain) -> dict:
                             "description": h.description} for h in f.fields],
             } if f.found else {"found": False},
             "text": {"format": chain.text.describe(), "characters": chain.text.characters,
-                     "content": chain.text.text} if chain.text else None,
+                     "content": chain.text.text,
+                     "messages": [{"header": m.header, "station": m.station,
+                                   "subject": m.subject, "number": m.number, "text": m.text}
+                                  for m in getattr(chain.text, "messages", [])]}
+            if chain.text else None,
             "elapsed_s": round(chain.elapsed_s, 2),
         }
     return out
@@ -209,7 +213,9 @@ def main(argv: list[str] | None = None) -> int:
             for f in chain.framing.fields:
                 log(f"    bits {f.start}–{f.start + f.length - 1}: {f.description}")
             if chain.text is not None:
-                lines = [ln for ln in chain.text.text.splitlines() if ln.strip()]
+                for m in getattr(chain.text, "messages", []):
+                    log(f"  NAVTEX message {m.describe()}")
+                lines = [ln for ln in chain.text.text.splitlines() if ln.strip().strip("~")]
                 log(f"Decoded text ({chain.text.characters:,} characters, first "
                     f"{min(len(lines), 25)} lines):")
                 for ln in lines[:25]:

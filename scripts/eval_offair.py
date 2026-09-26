@@ -9,7 +9,8 @@ standard parameters of the service):
 ========== ================================================= =================
 capture    signal                                            checked
 ========== ================================================= =================
-navtex     NAVTEX (SITOR-B), 2-FSK 100 Bd, 170 Hz shift      modulation, rate
+navtex     NAVTEX (SITOR-B), 2-FSK 100 Bd, 170 Hz shift      modulation, rate,
+                                                              NAVTEX messages
 rtty       DWD RTTY, 2-FSK 50 Bd, 450 Hz shift, async         modulation, rate,
                                                               Baudot text
 no84       NO-84 packets: FM carrying audio tones             modulation
@@ -39,7 +40,7 @@ from src.decoding.auto_decode import auto_decode, expected_ber_from_evm  # noqa:
 from src.dsp.pipeline import AnalysisPipeline  # noqa: E402
 
 TRUTH = {
-    "navtex": dict(mod={M.FSK2}, rates=(100.0,), sync=None),
+    "navtex": dict(mod={M.FSK2}, rates=(100.0,), sync=None, messages=True),
     "rtty": dict(mod={M.FSK2}, rates=(50.0, 100.0), sync=None, text=True),
     "no84": dict(mod={M.FM}, rates=(), sync=None),
     "radiosonde": dict(mod={M.FSK2, M.GFSK}, rates=(4800.0,),
@@ -73,7 +74,9 @@ def evaluate(path: Path) -> dict:
         f = chain.framing
         row["framing"] = (f"{f.sync_name or 'blind'} ×{len(f.frames)}" if f.found else "none")
         if chain.text is not None:
-            row["framing"] = f"Baudot text, {chain.text.characters:,} characters"
+            msgs = getattr(chain.text, "messages", [])
+            row["framing"] = (f"NAVTEX, {len(msgs)} messages" if msgs else
+                              f"Baudot text, {chain.text.characters:,} characters")
         row["fec"] = chain.step("FEC").status
     else:
         row["fec"] = "—"
@@ -87,6 +90,9 @@ def evaluate(path: Path) -> dict:
             ok &= t["sync"] in row["framing"]
         if t.get("image"):
             ok &= res.apt is not None and res.apt.sync_quality >= 0.9
+        if t.get("messages"):
+            ok &= row["framing"].startswith("NAVTEX") and not row["framing"].startswith(
+                "NAVTEX, 0")
         if t.get("text"):
             ok &= row["framing"].startswith("Baudot text")
         ok &= row["fec"] in ("none", "skipped", "—")      # none carries a library code
