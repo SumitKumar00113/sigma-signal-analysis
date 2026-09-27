@@ -7,12 +7,9 @@ file hash, and metadata completeness (PRD §8.2C).
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QFormLayout,
-    QGroupBox,
     QLabel,
-    QProgressBar,
+    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
@@ -20,10 +17,14 @@ from PySide6.QtWidgets import (
 from src.core.models import FileValidationReport, RecordingMetadata
 from src.gui.theme import (
     ACCENT_DANGER,
+    ACCENT_SUCCESS,
     ACCENT_WARNING,
-    TEXT_PRIMARY,
-    TEXT_SECONDARY,
+    TEXT_MUTED,
 )
+from src.gui.widgets import KeyValueRow, MeterRow
+
+# Kept under its historical name: other panels build their rows with it
+_InfoRow = KeyValueRow
 
 
 def _format_hz(hz: float) -> str:
@@ -54,30 +55,12 @@ def _format_bytes(b: int) -> str:
     return f"{b} B"
 
 
-class _InfoRow(QWidget):
-    """A styled label + value row."""
-
-    def __init__(self, label: str, value: str = "—", parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        layout = QFormLayout(self)
-        layout.setContentsMargins(0, 2, 0, 2)
-        lbl = QLabel(label)
-        lbl.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 12px; background: transparent;")
-        self._val = QLabel(value)
-        self._val.setStyleSheet(
-            f"color: {TEXT_PRIMARY}; font-size: 13px;"
-            f" font-weight: 500; background: transparent;"
-        )
-        self._val.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        layout.addRow(lbl, self._val)
-
-    def set_value(self, text: str, color: str | None = None) -> None:
-        style = (
-            f"font-size: 13px; font-weight: 500;"
-            f" background: transparent; color: {color or TEXT_PRIMARY};"
-        )
-        self._val.setStyleSheet(style)
-        self._val.setText(text)
+def section_label(text: str) -> QLabel:
+    """Small upper-case caption separating groups of rows."""
+    lbl = QLabel(text.upper())
+    lbl.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 10px; font-weight: 700; "
+                      "letter-spacing: 1px; padding-top: 6px;")
+    return lbl
 
 
 class RecordingOverview(QWidget):
@@ -85,58 +68,49 @@ class RecordingOverview(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._rows: dict[str, _InfoRow] = {}
+        self._rows: dict[str, KeyValueRow] = {}
         self._setup_ui()
 
     def _setup_ui(self) -> None:
-        layout = QVBoxLayout(self)
-        layout.setSpacing(8)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        body = QWidget()
+        layout = QVBoxLayout(body)
+        layout.setContentsMargins(0, 4, 6, 4)
+        layout.setSpacing(5)
 
-        title = QLabel("Recording Overview")
-        title.setProperty("role", "heading")
-        layout.addWidget(title)
+        sections = (
+            ("File", ("File", "Format", "Size", "SHA-256")),
+            ("Signal", ("Sample Rate", "Center Frequency", "Duration",
+                        "Samples", "Channels", "Data Type", "IQ Order")),
+            ("Quality", ("DC Offset (I)", "DC Offset (Q)", "IQ Imbalance",
+                         "Clipping", "NaN Count", "Inf Count")),
+        )
+        for title, keys in sections:
+            layout.addWidget(section_label(title))
+            for key in keys:
+                row = KeyValueRow(key)
+                self._rows[key] = row
+                layout.addWidget(row)
 
-        # Recording info group
-        rec_group = QGroupBox("File Information")
-        rec_layout = QVBoxLayout(rec_group)
-        for key in ("File", "Format", "Size", "SHA-256"):
-            row = _InfoRow(key)
-            self._rows[key] = row
-            rec_layout.addWidget(row)
-        layout.addWidget(rec_group)
+        layout.addWidget(section_label("Metadata"))
+        self._completeness = MeterRow("Completeness", ACCENT_SUCCESS)
+        layout.addWidget(self._completeness)
 
-        # Signal info group
-        sig_group = QGroupBox("Signal Properties")
-        sig_layout = QVBoxLayout(sig_group)
-        for key in ("Sample Rate", "Center Frequency", "Duration",
-                     "Samples", "Channels", "Data Type", "IQ Order"):
-            row = _InfoRow(key)
-            self._rows[key] = row
-            sig_layout.addWidget(row)
-        layout.addWidget(sig_group)
-
-        # Quality group
-        qual_group = QGroupBox("Quality Metrics")
-        qual_layout = QVBoxLayout(qual_group)
-        for key in ("DC Offset (I)", "DC Offset (Q)", "IQ Imbalance",
-                     "Clipping", "NaN Count", "Inf Count"):
-            row = _InfoRow(key)
-            self._rows[key] = row
-            qual_layout.addWidget(row)
-
-        # Metadata completeness bar
-        self._completeness_bar = QProgressBar()
-        self._completeness_bar.setRange(0, 100)
-        self._completeness_bar.setValue(0)
-        self._completeness_bar.setFormat("Metadata: %p% complete")
-        qual_layout.addWidget(self._completeness_bar)
-
-        layout.addWidget(qual_group)
         layout.addStretch()
+        scroll.setWidget(body)
+        outer.addWidget(scroll)
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+
+    def clear(self) -> None:
+        for row in self._rows.values():
+            row.set_value("—")
+        self._completeness.reset()
 
     def update_metadata(self, meta: RecordingMetadata) -> None:
         """Populate rows from recording metadata."""
@@ -160,13 +134,16 @@ class RecordingOverview(QWidget):
             meta.source_path,
             meta.num_channels > 0,
         ] if v)
-        pct = int(100 * filled / 5)
-        self._completeness_bar.setValue(pct)
+        pct = filled / 5
+        self._completeness.set(None, f"{pct:.0%}", pct,
+                               ACCENT_SUCCESS if pct >= 0.8 else ACCENT_WARNING)
 
     def update_validation(self, report: FileValidationReport) -> None:
         """Populate quality rows from validation report."""
         self._rows["Size"].set_value(_format_bytes(report.file_size_bytes))
         self._rows["SHA-256"].set_value(report.sha256[:16] + "…" if report.sha256 else "—")
+        if report.sha256:
+            self._rows["SHA-256"].setToolTip(report.sha256)
 
         self._rows["DC Offset (I)"].set_value(f"{report.dc_offset_i:.6f}")
         self._rows["DC Offset (Q)"].set_value(f"{report.dc_offset_q:.6f}")

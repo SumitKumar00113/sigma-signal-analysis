@@ -24,6 +24,8 @@ from src.gui.theme import (
     ACCENT_PRIMARY,
     ACCENT_WARNING,
     BG_DARKEST,
+    PLOT_BG,
+    TEXT_MUTED,
     TEXT_PRIMARY,
 )
 
@@ -40,7 +42,7 @@ class SpectrumViewer(QWidget):
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(4)
+        layout.setSpacing(8)
 
         # Controls
         controls = QHBoxLayout()
@@ -71,8 +73,8 @@ class SpectrumViewer(QWidget):
 
         # Plot
         pg.setConfigOptions(background=BG_DARKEST, foreground=TEXT_PRIMARY, antialias=True)
-        self._plot_widget = pg.PlotWidget()
-        self._plot_widget.showGrid(x=True, y=True, alpha=0.15)
+        self._plot_widget = pg.PlotWidget(background=PLOT_BG)
+        self._plot_widget.showGrid(x=True, y=True, alpha=0.12)
         self._plot_widget.setLabel("bottom", "Frequency", units="Hz")
         self._plot_widget.setLabel("left", "Power", units="dB/Hz")
 
@@ -87,7 +89,7 @@ class SpectrumViewer(QWidget):
 
         # Crosshair
         self._vline = pg.InfiniteLine(angle=90, movable=False,
-                                       pen=pg.mkPen(TEXT_PRIMARY, width=1, style=Qt.DashLine))
+                                       pen=pg.mkPen(TEXT_MUTED, width=1, style=Qt.DashLine))
         self._plot_widget.addItem(self._vline, ignoreBounds=True)
         self._proxy = pg.SignalProxy(
             self._plot_widget.scene().sigMouseMoved,
@@ -106,6 +108,10 @@ class SpectrumViewer(QWidget):
         self._samples = samples
         self._sample_rate = sample_rate
         self._update_plot()
+
+    def set_fft_size(self, n: int) -> None:
+        """Change the FFT size (re-plots if data is loaded)."""
+        self._fft_spin.setValue(int(n))
 
     # ------------------------------------------------------------------
     # Internals
@@ -128,13 +134,15 @@ class SpectrumViewer(QWidget):
         self._plot_widget.clear()
 
         # PSD curve
+        noise = estimate_noise_floor(psd_db)
         self._plot_widget.plot(
             freqs, psd_db,
             pen=pg.mkPen(ACCENT_PRIMARY, width=1.5),
+            fillLevel=float(np.min(psd_db)),
+            brush=pg.mkBrush(78, 168, 245, 28),
         )
 
         # Noise floor
-        noise = estimate_noise_floor(psd_db)
         self._noise_line = pg.InfiniteLine(
             pos=noise, angle=0, movable=False,
             pen=pg.mkPen(ACCENT_WARNING, width=1, style=Qt.DashLine),
@@ -155,7 +163,7 @@ class SpectrumViewer(QWidget):
         # Re-add crosshair
         self._vline = pg.InfiniteLine(
             angle=90, movable=False,
-            pen=pg.mkPen(TEXT_PRIMARY, width=1, style=Qt.DashLine),
+            pen=pg.mkPen(TEXT_MUTED, width=1, style=Qt.DashLine),
         )
         self._plot_widget.addItem(self._vline, ignoreBounds=True)
 

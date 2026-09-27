@@ -56,7 +56,7 @@ class InputWizard(QDialog):
         layout.setSpacing(12)
 
         # Title
-        title = QLabel("📡  Input Characterization")
+        title = QLabel("Input Characterization")
         title.setProperty("role", "heading")
         layout.addWidget(title)
 
@@ -154,7 +154,7 @@ class InputWizard(QDialog):
         # Sample-rate inference (raw IQ has no header)
         infer_group = QGroupBox("Sample Rate Inference (headerless files)")
         ig = QVBoxLayout(infer_group)
-        self._infer_btn = QPushButton("🔍 Suggest sample rates from the signal")
+        self._infer_btn = QPushButton("Suggest sample rates from the signal")
         self._infer_btn.clicked.connect(self._suggest_sample_rates)
         ig.addWidget(self._infer_btn)
         self._infer_note = QLabel(
@@ -186,10 +186,12 @@ class InputWizard(QDialog):
         nav.addWidget(self._back_btn)
 
         self._next_btn = QPushButton("Next →")
+        self._next_btn.setProperty("primary", True)
         self._next_btn.clicked.connect(self._go_next)
         nav.addWidget(self._next_btn)
 
-        self._finish_btn = QPushButton("✓ Open Recording")
+        self._finish_btn = QPushButton("Open Recording")
+        self._finish_btn.setProperty("primary", True)
         self._finish_btn.clicked.connect(self._finish)
         self._finish_btn.setVisible(False)
         nav.addWidget(self._finish_btn)
