@@ -76,12 +76,14 @@ from src.decoding.ldpc import (
 )
 from src.decoding.reed_solomon import ReedSolomon, rs_decode_stream
 from src.decoding.viterbi import STANDARD_CODES, ConvCode, viterbi_decode
+from src.gui.icons import icon
 from src.gui.theme import (
     ACCENT_DANGER,
     ACCENT_PRIMARY,
     ACCENT_SUCCESS,
     ACCENT_WARNING,
     BG_DARKEST,
+    PLOT_BG,
     TEXT_PRIMARY,
     TEXT_SECONDARY,
 )
@@ -122,10 +124,13 @@ class DecodingPanel(QWidget):
 
     def _setup_ui(self) -> None:
         root = QVBoxLayout(self)
-        root.setContentsMargins(6, 6, 6, 6)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(8)
 
         header = QHBoxLayout()
-        self._auto_btn = QPushButton("⚡ Auto-decode")
+        self._auto_btn = QPushButton("Auto-decode")
+        self._auto_btn.setProperty("primary", True)
+        self._auto_btn.setIcon(icon("bolt", "#ffffff", 14))
         self._auto_btn.setToolTip(
             "One click: resolve the bit mapping, find the interleaver and FEC, decode, then "
             "find the frame sync word and header. Every step is filled in below and can be "
@@ -148,7 +153,8 @@ class DecodingPanel(QWidget):
         self._fmt_combo.addItems(["Hex", "Binary"])
         self._fmt_combo.currentIndexChanged.connect(self._render_bits)
         header.addWidget(self._fmt_combo)
-        save_btn = QPushButton("💾 Save bits…")
+        save_btn = QPushButton("Save bits…")
+        save_btn.setIcon(icon("save", TEXT_PRIMARY, 14))
         save_btn.clicked.connect(self._save_bits)
         header.addWidget(save_btn)
         root.addLayout(header)
@@ -184,8 +190,9 @@ class DecodingPanel(QWidget):
         rl.addWidget(self._bits_view, stretch=3)
 
         pg.setConfigOptions(background=BG_DARKEST, foreground=TEXT_PRIMARY, antialias=True)
-        self._ac_plot = pg.PlotWidget(title="Autocorrelation / Sync correlation")
-        self._ac_plot.showGrid(x=True, y=True, alpha=0.15)
+        self._ac_plot = pg.PlotWidget(title="Autocorrelation / Sync correlation",
+                                      background=PLOT_BG)
+        self._ac_plot.showGrid(x=True, y=True, alpha=0.12)
         self._ac_plot.setLabel("bottom", "Lag / position (bits)")
         self._ac_plot.setLabel("left", "Correlation")
         self._ac_curve = self._ac_plot.plot(pen=pg.mkPen(ACCENT_PRIMARY, width=1))
@@ -251,7 +258,8 @@ class DecodingPanel(QWidget):
         btn = QPushButton("Apply de-interleave")
         btn.clicked.connect(self._apply_deinterleave)
         btns.addWidget(btn)
-        self._il_auto_btn = QPushButton("🔍 Auto-detect")
+        self._il_auto_btn = QPushButton("Auto-detect")
+        self._il_auto_btn.setIcon(icon("target", TEXT_PRIMARY, 14))
         self._il_auto_btn.setToolTip(
             "Blind search for block, diagonal and convolutional interleavers (and pseudo-random "
             "seeds if block sizes are given). Needs a convolutional code in the stream; the code "
@@ -340,7 +348,7 @@ class DecodingPanel(QWidget):
         load_btn = QPushButton("Load .alist/.qc…")
         load_btn.clicked.connect(self._load_ldpc_file)
         lb.addWidget(load_btn)
-        dl_btn = QPushButton("⬇ Standard codes…")
+        dl_btn = QPushButton("Standard codes…")
         dl_btn.setToolTip("Download DVB-S2, Wi-Fi, WiMAX, 5G NR, CCSDS, 10GBASE-T matrices")
         dl_btn.clicked.connect(self._download_ldpc_codes)
         lb.addWidget(dl_btn)
@@ -379,7 +387,8 @@ class DecodingPanel(QWidget):
         btn = QPushButton("Decode")
         btn.clicked.connect(self._apply_fec)
         btns.addWidget(btn)
-        self._fec_auto_btn = QPushButton("🔍 Auto-detect")
+        self._fec_auto_btn = QPushButton("Auto-detect")
+        self._fec_auto_btn.setIcon(icon("target", TEXT_PRIMARY, 14))
         self._fec_auto_btn.setToolTip(
             "Blind identification: convolutional codes (library incl. punctured, and blind "
             "rate-1/n generator recovery), Reed-Solomon, concatenated RS+conv, and generic "

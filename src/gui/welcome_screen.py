@@ -1,29 +1,39 @@
 """Welcome / landing screen.
 
-Provides quick access to new project creation, opening recent recordings,
-and system capability summary.
+Quick actions (open a recording, open a project, train the classifier),
+the recently opened recordings, and a summary of what the platform does.
 """
 
 from __future__ import annotations
+
+from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QListWidget,
+    QListWidgetItem,
+    QPushButton,
     QVBoxLayout,
     QWidget,
 )
 
+from src.core.models import RecordingMetadata
+from src.gui.icons import icon, pixmap
 from src.gui.theme import (
     ACCENT_PRIMARY,
     ACCENT_SECONDARY,
-    BG_LIGHT,
-    BG_MID,
+    ACCENT_SUCCESS,
+    APP_VERSION,
+    CARD_BG,
+    CARD_BORDER,
     TEXT_MUTED,
     TEXT_PRIMARY,
     TEXT_SECONDARY,
 )
+from src.gui.widgets import Card, KeyValueRow
 
 
 class _ActionCard(QFrame):
@@ -33,50 +43,62 @@ class _ActionCard(QFrame):
 
     def __init__(
         self,
-        icon_text: str,
+        icon_name: str,
         title: str,
         subtitle: str,
         accent: str = ACCENT_PRIMARY,
+        shortcut: str = "",
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
+        self.setObjectName("actionCard")
         self.setCursor(Qt.PointingHandCursor)
+        self.setMinimumHeight(150)
         self.setStyleSheet(f"""
-            _ActionCard {{
-                background-color: {BG_MID};
-                border: 1px solid {BG_LIGHT};
-                border-radius: 12px;
-                padding: 24px;
+            QFrame#actionCard {{
+                background-color: {CARD_BG};
+                border: 1px solid {CARD_BORDER};
+                border-radius: 14px;
             }}
-            _ActionCard:hover {{
+            QFrame#actionCard:hover {{
                 border-color: {accent};
-                background-color: {BG_LIGHT};
+                background-color: rgba(255, 255, 255, 0.05);
             }}
         """)
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 18, 20, 18)
         layout.setSpacing(8)
 
-        icon_label = QLabel(icon_text)
-        icon_label.setStyleSheet(f"font-size: 32px; color: {accent}; background: transparent;")
-        layout.addWidget(icon_label)
+        top = QHBoxLayout()
+        badge = QLabel()
+        badge.setFixedSize(40, 40)
+        badge.setAlignment(Qt.AlignCenter)
+        badge.setPixmap(pixmap(icon_name, accent, 22))
+        badge.setStyleSheet(f"background-color: rgba(255,255,255,0.05); "
+                            f"border: 1px solid {CARD_BORDER}; border-radius: 10px;")
+        top.addWidget(badge)
+        top.addStretch()
+        if shortcut:
+            sc = QLabel(shortcut)
+            sc.setObjectName("chip")
+            top.addWidget(sc, alignment=Qt.AlignTop)
+        layout.addLayout(top)
+        layout.addSpacing(4)
 
         title_label = QLabel(title)
-        title_label.setStyleSheet(
-            f"font-size: 16px; font-weight: bold; color: {TEXT_PRIMARY}; background: transparent;"
-        )
+        title_label.setStyleSheet(f"font-size: 15px; font-weight: 600; color: {TEXT_PRIMARY};")
         layout.addWidget(title_label)
 
         sub_label = QLabel(subtitle)
-        sub_label.setStyleSheet(
-            f"font-size: 12px; color: {TEXT_SECONDARY};"
-            " background: transparent;"
-        )
+        sub_label.setStyleSheet(f"font-size: 12px; color: {TEXT_SECONDARY};")
         sub_label.setWordWrap(True)
         layout.addWidget(sub_label)
+        layout.addStretch()
 
     def mousePressEvent(self, event):  # noqa: N802
-        self.clicked.emit()
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit()
         super().mousePressEvent(event)
 
 
@@ -85,6 +107,10 @@ class WelcomeScreen(QWidget):
 
     open_file_requested = Signal()
     new_project_requested = Signal()
+    open_project_requested = Signal()
+    train_requested = Signal()
+    recent_requested = Signal(str, object)       # (path, RecordingMetadata)
+    clear_recent_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -92,70 +118,126 @@ class WelcomeScreen(QWidget):
 
     def _setup_ui(self) -> None:
         outer = QVBoxLayout(self)
-        outer.setAlignment(Qt.AlignCenter)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addStretch(1)
 
         container = QWidget()
-        container.setMaximumWidth(720)
+        container.setMaximumWidth(1080)
         layout = QVBoxLayout(container)
-        layout.setSpacing(16)
+        layout.setContentsMargins(24, 0, 24, 0)
+        layout.setSpacing(18)
 
-        # Title
-        title = QLabel("⚡ Sigma Signal Analysis")
-        title.setStyleSheet(
-            f"font-size: 28px; font-weight: bold; color: {TEXT_PRIMARY}; background: transparent;"
-        )
-        title.setAlignment(Qt.AlignCenter)
+        title = QLabel("Signal Analysis Hub")
+        title.setStyleSheet(f"font-size: 34px; font-weight: 700; color: {TEXT_PRIMARY};")
         layout.addWidget(title)
-
-        subtitle = QLabel("Automated RF Signal Analysis & Demodulation Platform")
-        subtitle.setStyleSheet(
-            f"font-size: 14px; color: {TEXT_SECONDARY}; background: transparent;"
-        )
-        subtitle.setAlignment(Qt.AlignCenter)
+        subtitle = QLabel("Inspect, classify, demodulate and decode RF recordings — "
+                          "from raw IQ to decoded frames in one click.")
+        subtitle.setStyleSheet(f"font-size: 14px; color: {TEXT_SECONDARY};")
+        subtitle.setWordWrap(True)
         layout.addWidget(subtitle)
-
-        layout.addSpacing(24)
+        layout.addSpacing(6)
 
         # Action cards row
-        cards_layout = QHBoxLayout()
-        cards_layout.setSpacing(16)
-
+        cards = QHBoxLayout()
+        cards.setSpacing(14)
         open_card = _ActionCard(
-            "📂", "Open Recording",
-            "Load a .wav, raw IQ, or SigMF file for analysis",
-            ACCENT_PRIMARY,
+            "open", "Open Recording",
+            "WAV, raw IQ or SigMF. The input wizard detects the format and helps "
+            "with sample rate and IQ layout.",
+            ACCENT_PRIMARY, "Ctrl+O",
         )
         open_card.clicked.connect(self.open_file_requested.emit)
-        cards_layout.addWidget(open_card)
+        cards.addWidget(open_card)
 
-        new_card = _ActionCard(
-            "📁", "New Project",
-            "Create a new analysis project with multiple recordings",
-            ACCENT_SECONDARY,
+        project_card = _ActionCard(
+            "layers", "Open Project",
+            "Restore a saved session: its recordings, reader settings, classifier "
+            "mode and overrides.",
+            ACCENT_SECONDARY, "Ctrl+Shift+O",
         )
-        new_card.clicked.connect(self.new_project_requested.emit)
-        cards_layout.addWidget(new_card)
+        project_card.clicked.connect(self.open_project_requested.emit)
+        cards.addWidget(project_card)
 
-        layout.addLayout(cards_layout)
-
-        layout.addSpacing(16)
-
-        # Supported formats
-        formats_label = QLabel(
-            "Supported formats: WAV (PCM 8/16/24/32, float32) · "
-            "Raw IQ (cf32, ci16, cu8, …) · SigMF (.sigmf-meta/.sigmf-data)"
+        self._train_card = _ActionCard(
+            "cpu", "Train Classifier",
+            "Train the learned modulation model on synthetic signals and your own "
+            "labelled recordings.",
+            ACCENT_SUCCESS,
         )
-        formats_label.setStyleSheet(
-            f"font-size: 11px; color: {TEXT_MUTED}; background: transparent;"
-        )
-        formats_label.setAlignment(Qt.AlignCenter)
-        formats_label.setWordWrap(True)
-        layout.addWidget(formats_label)
+        self._train_card.clicked.connect(self.train_requested.emit)
+        cards.addWidget(self._train_card)
+        layout.addLayout(cards)
 
-        # Version
-        ver = QLabel("v0.1.0 — Phase 1 MVP")
-        ver.setStyleSheet(f"font-size: 11px; color: {TEXT_MUTED}; background: transparent;")
-        ver.setAlignment(Qt.AlignCenter)
+        # Recent + capabilities
+        lower = QHBoxLayout()
+        lower.setSpacing(14)
+
+        self._recent_card = Card("Recent recordings", "clock")
+        clear_btn = QPushButton("Clear")
+        clear_btn.setCursor(Qt.PointingHandCursor)
+        clear_btn.setStyleSheet("padding: 3px 10px; font-size: 11px;")
+        clear_btn.clicked.connect(self.clear_recent_requested.emit)
+        self._recent_card.header.addWidget(clear_btn)
+        self._recent_list = QListWidget()
+        self._recent_list.setMinimumHeight(170)
+        self._recent_list.setCursor(Qt.PointingHandCursor)
+        self._recent_list.itemClicked.connect(self._on_recent_activated)
+        self._recent_card.body.addWidget(self._recent_list)
+        self._recent_empty = QLabel("Recordings you open will appear here.")
+        self._recent_empty.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 12px;")
+        self._recent_empty.setAlignment(Qt.AlignCenter)
+        self._recent_card.body.addWidget(self._recent_empty)
+        lower.addWidget(self._recent_card, stretch=3)
+
+        caps = Card("Capabilities", "info")
+        for key, value in (
+            ("Formats", "WAV · Raw IQ · SigMF"),
+            ("Classification", "18 modulation types"),
+            ("Demodulation", "PSK · QAM · FSK · ASK · AM/FM/SSB"),
+            ("FEC", "Viterbi · Reed-Solomon · LDPC"),
+            ("Decoders", "RTTY · NAVTEX · NOAA APT"),
+        ):
+            caps.body.addWidget(KeyValueRow(key, value))
+        caps.body.addStretch()
+        lower.addWidget(caps, stretch=2)
+        layout.addLayout(lower)
+
+        ver = QLabel(f"Sigma v{APP_VERSION}")
+        ver.setStyleSheet(f"font-size: 11px; color: {TEXT_MUTED};")
         layout.addWidget(ver)
 
-        outer.addWidget(container)
+        row = QHBoxLayout()
+        row.addStretch()
+        row.addWidget(container, stretch=10)
+        row.addStretch()
+        outer.addLayout(row)
+        outer.addStretch(2)
+        self.set_recent([])
+
+    # ------------------------------------------------------------------
+
+    def set_train_enabled(self, enabled: bool) -> None:
+        self._train_card.setEnabled(enabled)
+        self._train_card.setToolTip("" if enabled else
+                                    "Install the ML extras: pip install -e '.[ml]'")
+
+    def set_recent(self, entries: list[tuple[str, RecordingMetadata]]) -> None:
+        self._recent_list.clear()
+        for path, meta in entries:
+            p = Path(path)
+            rate = (f"{meta.sample_rate_hz / 1e3:,.1f} kHz" if meta.sample_rate_hz > 0
+                    else "rate from file")
+            item = QListWidgetItem(icon("wave", ACCENT_PRIMARY, 16),
+                                   f"{p.name}\n{meta.source_format.value}  ·  {rate}  ·  "
+                                   f"{p.parent}")
+            item.setData(Qt.UserRole, (path, meta))
+            item.setToolTip(path)
+            self._recent_list.addItem(item)
+        has = bool(entries)
+        self._recent_list.setVisible(has)
+        self._recent_empty.setVisible(not has)
+
+    def _on_recent_activated(self, item: QListWidgetItem) -> None:
+        data = item.data(Qt.UserRole)
+        if data:
+            self.recent_requested.emit(data[0], data[1])
