@@ -583,7 +583,24 @@ class AnalysisPipeline:
                 symbol_rate = rule.symbol_rate_hz
                 analysis.symbol_rate_hz = symbol_rate
             if rule.carrier_hz is not None:
+                coarse = result.frequency_offset_hz
                 result.frequency_offset_hz = float(rule.carrier_hz)
+                # The spectral-centroid estimate is superseded: report the refined value
+                analysis.warnings = [w for w in analysis.warnings
+                                     if not w.startswith("Estimated carrier offset:")]
+                if abs(result.frequency_offset_hz - coarse) <= 1.0:
+                    if abs(coarse) > 1.0:
+                        analysis.warnings.append(
+                            f"Estimated carrier offset: {result.frequency_offset_hz:,.0f} Hz "
+                            "(confirmed by the constellation)")
+                elif abs(result.frequency_offset_hz) > 1.0:
+                    analysis.warnings.append(
+                        f"Carrier offset refined {coarse:,.0f} → "
+                        f"{result.frequency_offset_hz:,.0f} Hz (constellation)")
+                for p in analysis.parameters:
+                    if p.parameter == "carrier_offset_hz":
+                        p.value = round(result.frequency_offset_hz, 1)
+                        p.evidence.append("Refined from the constellation")
 
         analysis.modulation = decision_mod
         analysis.modulation_confidence = float(confidence)

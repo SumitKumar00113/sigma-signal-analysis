@@ -157,8 +157,8 @@ def looks_like_apt(tone_hz: float, fm_deviation_hz: float | None = None) -> bool
         fm_deviation_hz is None or fm_deviation_hz >= 3000.0)
 
 
-def write_png(path: str | Path, image: np.ndarray) -> Path:
-    """Save an 8-bit greyscale image as PNG (no imaging library needed)."""
+def png_bytes(image: np.ndarray) -> bytes:
+    """Encode an 8-bit greyscale image as PNG (no imaging library needed)."""
     img = np.ascontiguousarray(np.asarray(image, dtype=np.uint8))
     h, w = img.shape
     raw = b"".join(b"\x00" + img[r].tobytes() for r in range(h))
@@ -167,9 +167,13 @@ def write_png(path: str | Path, image: np.ndarray) -> Path:
         return (struct.pack(">I", len(data)) + tag + data
                 + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF))
 
-    png = (b"\x89PNG\r\n\x1a\n"
-           + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 0, 0, 0, 0))
-           + chunk(b"IDAT", zlib.compress(raw, 9)) + chunk(b"IEND", b""))
+    return (b"\x89PNG\r\n\x1a\n"
+            + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 0, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(raw, 9)) + chunk(b"IEND", b""))
+
+
+def write_png(path: str | Path, image: np.ndarray) -> Path:
+    """Save an 8-bit greyscale image as PNG."""
     p = Path(path)
-    p.write_bytes(png)
+    p.write_bytes(png_bytes(image))
     return p
