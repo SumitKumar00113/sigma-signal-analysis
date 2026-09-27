@@ -163,8 +163,48 @@ sigma
 python src/app.py
 
 # One-click analysis from the command line (or: sigma-auto …)
-python -m src.auto_analyse capture.wav --json report.json
+python -m src.auto_analyse capture.wav --json report.json --html report.html
 ```
+
+### Analysis Reports
+
+*File → Export Results…* (Ctrl+E) saves the current result as an **HTML report** or **JSON**.
+Run *Auto-Analyse* first to include the decoding chain. The HTML report is a single
+self-contained file with:
+
+- the recording (format, SHA-256, sample rate, centre frequency, provenance) and file-integrity checks (truncation, NaN/Inf, clipping, DC offset, IQ imbalance)
+- detected bursts, and the classification (ranked candidates, rules vs learned model, evidence, features)
+- estimated parameters with their provenance and alternatives, plus symbol-rate candidates
+- demodulation (EVM, CFO, lock quality, FSK tones, a constellation plot, a bit preview) and any decoded NOAA APT image
+- decoding (bit mapping, interleaver, FEC, framing with header fields and frames, decoded NAVTEX/RTTY text)
+- all warnings and stage errors
+
+The JSON export (and `--json` on the command line) carries the same data in machine-readable form.
+
+### Building the macOS App
+
+Build a standalone `Sigma Signal Analysis.app`. It needs no Python installed on the target Mac.
+
+```bash
+pip install -e '.[gui,ml]' pyinstaller
+pyinstaller --noconfirm --clean sigma.spec
+
+# check the bundle: loads the model, analyses a test signal, builds the window
+"dist/Sigma Signal Analysis.app/Contents/MacOS/Sigma" --self-test
+```
+
+The app is written to `dist/`. Build on the kind of Mac you are targeting: an Apple Silicon
+build runs on Apple Silicon only. The app icon comes from `packaging/macos/Sigma.icns`,
+generated from `src/gui/assets/app_icon.png`.
+
+**Prebuilt downloads:** pushing a tag `v*` (for example `v0.2.0`) runs
+`.github/workflows/release.yml`. That workflow builds and self-tests the app, then attaches
+`Sigma-Signal-Analysis-<version>-macOS-arm64.zip` to a GitHub Release. You can also run it
+by hand from the *Actions* tab.
+
+The app is not signed with an Apple Developer ID, so macOS blocks it the first time.
+Right-click the app, choose **Open**, then **Open** again. Or run
+`xattr -dr com.apple.quarantine "Sigma Signal Analysis.app"`.
 
 ### Running the Test Suite
 
