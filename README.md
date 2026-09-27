@@ -15,18 +15,23 @@
 
 ## Download
 
+**[⬇ Download SIGMA Signal Analysis for Windows (v0.2.0, .exe Setup, 85 MB)](https://github.com/SumitKumar00113/sigma-signal-analysis/releases/download/v0.2.0/SIGMA-Setup.exe)**
+
 **[⬇ Download Sigma Signal Analysis for Mac (v0.2.1, .zip, 78 MB)](https://github.com/SumitKumar00113/sigma-signal-analysis/releases/download/v0.2.1/Sigma-Signal-Analysis-0.2.1-macOS-arm64.zip)**
 
-This build needs a Mac with Apple Silicon (M1 or newer) running macOS 11 or later.
-You don't need to install Python or anything else.
+### Windows Installation
+1. Download **SIGMA-Setup.exe** above.
+2. Double-click to run the setup installer (Inno Setup) and follow the wizard. No Python or additional dependencies are required.
+3. Launch **SIGMA Signal Analysis** from your Start Menu or Desktop shortcut.
 
-1. Download the zip above and double-click it. You get **Sigma Signal Analysis.app**.
+### macOS Installation
+1. Download the macOS zip package above and double-click to extract **Sigma Signal Analysis.app**.
 2. Drag the app into your **Applications** folder.
-3. The first time only, **right-click** the app, choose **Open**, then click **Open** again.
-   macOS asks this because the app isn't signed with an Apple Developer ID.
+3. The first time only, **right-click** the app, choose **Open**, then click **Open** again (required because the app isn't signed with an Apple Developer ID).
 
-The newest version is always on the [Releases page](https://github.com/SumitKumar00113/sigma-signal-analysis/releases/latest).
-On Windows or Linux, or to run from source, see [Getting Started](#getting-started).
+The newest prebuilt release for all platforms is always available on the [Releases page](https://github.com/SumitKumar00113/sigma-signal-analysis/releases/latest).
+Explore the interactive visual overview and live documentation on the [Web Landing Page](docs/index.html).
+On Linux or to run from source, see [Getting Started](#getting-started).
 
 ## Architecture
 
@@ -196,21 +201,39 @@ self-contained file with:
 
 The JSON export (and `--json` on the command line) carries the same data in machine-readable form.
 
-### Building the macOS App
+### Building Desktop Apps & Installers
 
-Build a standalone `Sigma Signal Analysis.app`. It needs no Python installed on the target Mac.
+Standalone desktop executables and installers can be generated for Windows and macOS. End users can run these native binaries without installing Python or dependencies.
+
+#### Windows Installer & Standalone Executable
+1. Install packaging dependencies:
+   ```powershell
+   pip install -e '.[gui,ml]' pyinstaller
+   ```
+2. Build standalone executable bundle with PyInstaller:
+   ```powershell
+   pyinstaller --noconfirm --clean sigma.spec
+   ```
+   This compiles the binary into `dist/SIGMA/SIGMA.exe`.
+
+3. Generate Windows Setup Installer with Inno Setup (`sigma_installer.iss`):
+   ```powershell
+   iscc sigma_installer.iss
+   ```
+   This compiles `SIGMA-Setup.exe` in the project root directory with Start Menu shortcuts and desktop icons.
+
+#### macOS App Bundle (.app)
+Build a standalone `Sigma Signal Analysis.app`:
 
 ```bash
 pip install -e '.[gui,ml]' pyinstaller
 pyinstaller --noconfirm --clean sigma.spec
 
-# check the bundle: loads the model, analyses a test signal, builds the window
+# Check the bundle: loads the model, analyses a test signal, builds the window
 "dist/Sigma Signal Analysis.app/Contents/MacOS/Sigma" --self-test
 ```
 
-The app is written to `dist/`. Build on the kind of Mac you are targeting: an Apple Silicon
-build runs on Apple Silicon only. The app icon comes from `packaging/macos/Sigma.icns`,
-generated from `src/gui/assets/app_icon.png`.
+The app is written to `dist/`. Build on the target architecture (Apple Silicon build runs on Apple Silicon). App icons are configured from `packaging/macos/Sigma.icns` (generated from `src/gui/assets/app_icon.png`).
 
 **Prebuilt downloads:** pushing a tag `v*` (for example `v0.2.1`) runs
 `.github/workflows/release.yml`. That workflow builds and self-tests the app, then attaches
@@ -233,6 +256,40 @@ pytest tests/ --cov=src --cov-report=term-missing
 # Lint check
 ruff check src/ tests/
 ```
+
+### Developer & Evaluation Scripts
+
+The repository includes evaluation and utility scripts in `scripts/`:
+
+- **Modulation Classifier Benchmarking:**
+  ```bash
+  python scripts/eval_classifier.py 20 15 8 4
+  ```
+  Evaluates rule-based, learned ML, and hybrid classifier accuracy across all 18 supported modulation types with randomized SNRs, carrier offsets, and symbol rates.
+
+- **Demodulation Accuracy Evaluation:**
+  ```bash
+  python scripts/eval_demod.py
+  ```
+  Measures symbol error rates (BER) and EVM for PSK, QAM, FSK, and ASK demodulators using synthetic ground-truth signals.
+
+- **Off-Air Recording Benchmarking:**
+  ```bash
+  python scripts/eval_offair.py /path/to/recordings
+  ```
+  Runs the full pipeline against real SDR recordings (SITOR-B / NAVTEX, DWD RTTY, RS41 radiosondes, NOAA APT weather satellites).
+
+- **App Icon Generator:**
+  ```bash
+  python scripts/generate_icon.py
+  ```
+  Generates multi-resolution `.ico` icon assets (`assets/sigma.ico`) for PyInstaller executable bundling and Inno Setup installer packaging.
+
+- **Executable Launch Tester:**
+  ```bash
+  python scripts/test_launch.py
+  ```
+  Launches the built Windows executable `installed_app/SIGMA.exe`, verifies window initialization, takes a screenshot, and performs a clean process shutdown.
 
 ## Verified Performance
 
