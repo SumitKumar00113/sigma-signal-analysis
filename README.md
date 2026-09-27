@@ -30,12 +30,21 @@
 3. The first time only, **right-click** the app, choose **Open**, then click **Open** again (required because the app isn't signed with an Apple Developer ID).
 
 The newest prebuilt release for all platforms is always available on the [Releases page](https://github.com/SumitKumar00113/sigma-signal-analysis/releases/latest).
-Explore the interactive visual overview and live documentation on the [Web Landing Page](docs/index.html).
+Explore the interactive visual overview and live documentation on the [Web Landing Page](docs/index.html), built with Next.js 15 App Router.
 On Linux or to run from source, see [Getting Started](#getting-started).
 
 ## Architecture
 
 ```
+docs/               # Interactive Next.js 15 App Router landing site & web documentation
+├── app/            # App Router pages, layout, and global CSS
+├── components/     # Modular React components (Navbar, Hero, Workbench, BentoGrid, etc.)
+│   ├── bento/      # Bento grid graphics
+│   └── workbench/  # Real-time HTML5 canvas spectrum & constellation simulators, terminal
+├── data/           # Dataset profiles for off-air interactive workbench demo
+├── next.config.mjs # Next.js config with static export
+├── package.json    # Next.js dependencies & scripts
+└── tsconfig.json   # TypeScript configuration
 src/
 ├── core/           # Pydantic models, enums, config, exceptions
 ├── ingestion/      # FileReader subclasses (WAV, SigMF, Raw IQ), normalizer, validator,
@@ -243,6 +252,25 @@ by hand from the *Actions* tab.
 The app is not signed with an Apple Developer ID, so macOS blocks it the first time.
 Right-click the app, choose **Open**, then **Open** again. Or run
 `xattr -dr com.apple.quarantine "Sigma Signal Analysis.app"`.
+
+#### Web Documentation Site (Next.js 15 App Router)
+
+The interactive landing page and web documentation in `docs/` is powered by **Next.js 15** and **React 19**. It features modular React components, real-time HTML5 Canvas DSP spectrum & constellation simulators, and automated static export support.
+
+To develop or build the web documentation site locally:
+
+```bash
+cd docs
+
+# Install Next.js dependencies
+npm install
+
+# Start local development server (http://localhost:3000)
+npm run dev
+
+# Build static production export (generates static HTML/JS bundles)
+npm run build
+```
 
 ### Running the Test Suite
 

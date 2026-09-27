@@ -1,0 +1,10 @@
+# Next.js build output
+.next/
+out/
+node_modules/
+
+# Local env files
+.env*.local
+
+# Log files
+*.log
