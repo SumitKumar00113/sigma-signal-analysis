@@ -13,6 +13,21 @@
 > - FEC decoding, de-interleaving and bit-stream correlation;
 > - **one-click Auto-Analyse**: recording → parameters → demodulation → interleaver → FEC → decoded frames with sync word and header fields found blindly (GUI and `python -m src.auto_analyse`).
 
+## Download
+
+**[⬇ Download Sigma Signal Analysis for Mac (v0.2.1, .zip, 78 MB)](https://github.com/SumitKumar00113/sigma-signal-analysis/releases/download/v0.2.1/Sigma-Signal-Analysis-0.2.1-macOS-arm64.zip)**
+
+This build needs a Mac with Apple Silicon (M1 or newer) running macOS 11 or later.
+You don't need to install Python or anything else.
+
+1. Download the zip above and double-click it. You get **Sigma Signal Analysis.app**.
+2. Drag the app into your **Applications** folder.
+3. The first time only, **right-click** the app, choose **Open**, then click **Open** again.
+   macOS asks this because the app isn't signed with an Apple Developer ID.
+
+The newest version is always on the [Releases page](https://github.com/SumitKumar00113/sigma-signal-analysis/releases/latest).
+On Windows or Linux, or to run from source, see [Getting Started](#getting-started).
+
 ## Architecture
 
 ```
