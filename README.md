@@ -197,7 +197,7 @@ The app is written to `dist/`. Build on the kind of Mac you are targeting: an Ap
 build runs on Apple Silicon only. The app icon comes from `packaging/macos/Sigma.icns`,
 generated from `src/gui/assets/app_icon.png`.
 
-**Prebuilt downloads:** pushing a tag `v*` (for example `v0.2.0`) runs
+**Prebuilt downloads:** pushing a tag `v*` (for example `v0.2.1`) runs
 `.github/workflows/release.yml`. That workflow builds and self-tests the app, then attaches
 `Sigma-Signal-Analysis-<version>-macOS-arm64.zip` to a GitHub Release. You can also run it
 by hand from the *Actions* tab.
