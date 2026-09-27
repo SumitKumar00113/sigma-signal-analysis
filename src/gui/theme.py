@@ -8,11 +8,17 @@ pair so the two I/Q channels stay distinguishable.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from PySide6.QtGui import QColor, QFont, QFontDatabase, QPalette
 from PySide6.QtWidgets import QApplication
 
+from src import __version__
+
 APP_NAME = "Sigma Signal Analysis"
-APP_VERSION = "0.2.0"
+APP_VERSION = __version__
+# 1024 px master of the app icon (the macOS bundle uses packaging/macos/Sigma.icns)
+APP_ICON = Path(__file__).resolve().parent / "assets" / "app_icon.png"
 
 # ---------------------------------------------------------------------------
 # Colour constants

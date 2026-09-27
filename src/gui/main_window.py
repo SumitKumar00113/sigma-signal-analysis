@@ -136,6 +136,7 @@ class MainWindow(QMainWindow):
         self._loading_input: tuple[str, RecordingMetadata] | None = None
         self._project_path: Path | None = None
         self._last_result: PipelineResult | None = None
+        self._last_decode: object | None = None     # AutoDecodeResult for _last_result
         self._analysis_running = False
         self._analysis_offset_s = 0.0           # start of the analysed span in the recording
         self._pending_offset_s = 0.0
@@ -656,6 +657,7 @@ class MainWindow(QMainWindow):
         self._current_metadata = None
         self._current_path = None
         self._last_result = None
+        self._last_decode = None
         self._recordings.clear()
         self._project_path = None
         self._analysis_offset_s = 0.0
@@ -958,10 +960,11 @@ class MainWindow(QMainWindow):
         )
         try:
             if flt.startswith("HTML") or path.lower().endswith(".html"):
-                export_html_report(self._current_metadata, path=path, pipeline=self._last_result)
+                export_html_report(self._current_metadata, path=path, pipeline=self._last_result,
+                                   decode=self._last_decode)
                 self._log(f"✓ Exported HTML report to {path}")
             elif self._last_result is not None:
-                export_pipeline_json(self._last_result, path)
+                export_pipeline_json(self._last_result, path, decode=self._last_decode)
                 self._log(f"✓ Exported analysis + bits (JSON) to {path}")
             else:
                 export_metadata_json(self._current_metadata, path)
@@ -1028,6 +1031,7 @@ class MainWindow(QMainWindow):
         self._progress_bar.setValue(0)
         self._analysis_running = True
         self._last_result = None
+        self._last_decode = None
         self._results.set_busy(True)
         self._run_btn.setEnabled(False)
         self._auto_btn.setEnabled(False)
@@ -1063,6 +1067,7 @@ class MainWindow(QMainWindow):
         self._analysis_offset_s = self._pending_offset_s
         self._pending_offset_s = 0.0
         self._last_result = result
+        self._last_decode = None
         a = result.analysis
         self._show_result(result)
         self._inspector_tabs.setCurrentWidget(self._results)
@@ -1348,6 +1353,7 @@ class MainWindow(QMainWindow):
     @Slot(object)
     def _on_auto_decode_finished(self, res: object) -> None:
         self._status_label.setText("Ready")
+        self._last_decode = res
         self._log("⚡ Auto-decode result:")
         for line in res.summary().splitlines():
             self._log(f"  {line}")
@@ -1392,6 +1398,7 @@ class MainWindow(QMainWindow):
         self._current_samples = None
         self._current_metadata = None
         self._last_result = None
+        self._last_decode = None
         self._loading_input = (path, meta)
         self._update_actions()
         self._status_label.setText("Loading…")
@@ -1451,6 +1458,7 @@ class MainWindow(QMainWindow):
         self._current_path = path
         self._recordings[path] = input_meta
         self._last_result = None
+        self._last_decode = None
         self._analysis_offset_s = 0.0
         self._results.clear()
         self._constellation_viewer.clear()
