@@ -1,0 +1,1731 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SIGMA Signal Analysis | Desktop RF Inspection & Blind Decoding Platform</title>
+  <meta name="description" content="SIGMA Signal Analysis is a premium desktop platform for Windows & macOS for RF signal inspection, 18-class hybrid ML modulation classification, blind FEC/interleaver identification, and telemetry decoding." />
+  
+  <!-- Google Fonts: Plus Jakarta Sans & JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400&display=swap" rel="stylesheet">
+
+  <style>
+    /* ==========================================
+       PRIMARY DESIGN COLOR SYSTEM & TOKENS
+       Matching Reference Design Language
+       ========================================== */
+    :root {
+      /* Backgrounds */
+      --bg-dark: #030312;
+      --bg-dark-secondary: #050516;
+      --bg-card: rgba(15, 15, 35, 0.65);
+      --bg-card-hover: rgba(22, 22, 48, 0.85);
+      --bg-card-active: rgba(26, 26, 56, 0.95);
+      
+      /* Borders & Shadows */
+      --border-subtle: rgba(255, 255, 255, 0.08);
+      --border-purple: rgba(124, 58, 237, 0.35);
+      --border-purple-glow: rgba(139, 92, 246, 0.6);
+      
+      /* Purples & Indigo System */
+      --purple-primary: #7C3AED;
+      --purple-glow: #8B5CF6;
+      --indigo-accent: #4F46E5;
+      --purple-light: #C084FC;
+      --purple-lavender: #E9D5FF;
+      --cyan-subtle: #38BDF8;
+      --emerald-status: #10B981;
+      
+      /* Typography System */
+      --text-white: #F5F5F7;
+      --text-muted: #9A9AAF;
+      --text-dim: #64647A;
+      
+      /* Gradients */
+      --gradient-heading: linear-gradient(180deg, #FFFFFF 30%, #E9D5FF 100%);
+      --gradient-purple-btn: linear-gradient(135deg, #7C3AED 0%, #4F46E5 100%);
+      --gradient-card-glow: radial-gradient(circle, rgba(139, 92, 246, 0.15) 0%, rgba(79, 70, 229, 0.05) 60%, rgba(0, 0, 0, 0) 100%);
+      
+      /* Fonts */
+      --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+    }
+
+    /* CSS Reset */
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html {
+      scroll-behavior: smooth;
+      background-color: var(--bg-dark);
+      color: var(--text-white);
+      font-family: var(--font-sans);
+      line-height: 1.6;
+      overflow-x: hidden;
+    }
+
+    body {
+      position: relative;
+      min-height: 100vh;
+      background: var(--bg-dark);
+    }
+
+    /* ==========================================
+       CINEMATIC AMBIENT LIGHTING & GLOWS
+       ========================================== */
+    .ambient-glow {
+      position: absolute;
+      border-radius: 50%;
+      filter: blur(160px);
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .glow-hero-top {
+      top: -220px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 1100px;
+      height: 650px;
+      background: radial-gradient(circle, rgba(124, 58, 237, 0.22) 0%, rgba(79, 70, 229, 0.12) 55%, rgba(3, 3, 18, 0) 80%);
+    }
+
+    .glow-mid-section {
+      top: 1400px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 950px;
+      height: 550px;
+      background: radial-gradient(circle, rgba(139, 92, 246, 0.16) 0%, rgba(79, 70, 229, 0.08) 60%, rgba(0, 0, 0, 0) 100%);
+    }
+
+    .glow-cta-bottom {
+      bottom: 120px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 1000px;
+      height: 600px;
+      background: radial-gradient(circle, rgba(124, 58, 237, 0.25) 0%, rgba(139, 92, 246, 0.1) 60%, rgba(0, 0, 0, 0) 100%);
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 0 28px;
+      position: relative;
+      z-index: 1;
+    }
+
+    /* ==========================================
+       1. TOP NAVIGATION BAR
+       ========================================== */
+    .navbar {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(3, 3, 18, 0.85);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border-bottom: 1px solid var(--border-subtle);
+      padding: 16px 0;
+    }
+
+    .nav-content {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      text-decoration: none;
+      color: var(--text-white);
+      font-weight: 700;
+      font-size: 1.1rem;
+      letter-spacing: -0.01em;
+    }
+
+    .logo-icon {
+      width: 30px;
+      height: 30px;
+      border-radius: 8px;
+      background: linear-gradient(135deg, rgba(124, 58, 237, 0.3), rgba(79, 70, 229, 0.3));
+      border: 1px solid rgba(139, 92, 246, 0.4);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 0 15px rgba(124, 58, 237, 0.3);
+    }
+
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 36px;
+      list-style: none;
+    }
+
+    .nav-links a {
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 0.86rem;
+      font-weight: 500;
+      transition: color 0.2s ease;
+    }
+
+    .nav-links a:hover {
+      color: var(--text-white);
+    }
+
+    .nav-actions {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .btn-nav-github {
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 0.86rem;
+      font-weight: 500;
+      padding: 8px 16px;
+      border-radius: 9999px;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--border-subtle);
+      transition: all 0.2s ease;
+    }
+
+    .btn-nav-github:hover {
+      color: var(--text-white);
+      border-color: rgba(255, 255, 255, 0.2);
+    }
+
+    .btn-nav-primary {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 9px 22px;
+      border-radius: 9999px;
+      background: var(--gradient-purple-btn);
+      color: #ffffff;
+      font-size: 0.86rem;
+      font-weight: 600;
+      text-decoration: none;
+      box-shadow: 0 0 25px rgba(124, 58, 237, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+      transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .btn-nav-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 0 35px rgba(124, 58, 237, 0.6);
+      filter: brightness(1.08);
+    }
+
+    /* ==========================================
+       HERO SECTION WITH PERSPECTIVE GRID FLOOR
+       ========================================== */
+    .hero {
+      padding: 90px 0 80px 0;
+      text-align: center;
+      position: relative;
+    }
+
+    .hero-eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 18px;
+      border-radius: 9999px;
+      background: rgba(124, 58, 237, 0.12);
+      border: 1px solid rgba(124, 58, 237, 0.3);
+      color: var(--purple-lavender);
+      font-size: 0.78rem;
+      font-weight: 500;
+      margin-bottom: 32px;
+      text-decoration: none;
+      transition: all 0.2s ease;
+    }
+
+    .hero-eyebrow:hover {
+      background: rgba(124, 58, 237, 0.2);
+      border-color: rgba(124, 58, 237, 0.5);
+    }
+
+    .hero-heading {
+      font-size: 4rem;
+      font-weight: 500;
+      line-height: 1.15;
+      letter-spacing: -0.03em;
+      margin-bottom: 24px;
+      max-width: 940px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+
+    .hero-heading .highlight {
+      font-weight: 700;
+      color: #ffffff;
+      text-shadow: 0 0 40px rgba(139, 92, 246, 0.45);
+    }
+
+    .hero-subhead {
+      font-size: 0.76rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.22em;
+      color: var(--text-muted);
+      margin-bottom: 36px;
+      max-width: 780px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+
+    .hero-cta-group {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      margin-bottom: 70px;
+      flex-wrap: wrap;
+    }
+
+    .btn-hero-primary {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 14px 32px;
+      border-radius: 9999px;
+      background: var(--gradient-purple-btn);
+      color: #ffffff;
+      font-size: 0.92rem;
+      font-weight: 600;
+      text-decoration: none;
+      box-shadow: 0 0 35px rgba(124, 58, 237, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+      transition: all 0.3s ease;
+    }
+
+    .btn-hero-primary:hover {
+      transform: translateY(-2px) scale(1.01);
+      box-shadow: 0 0 50px rgba(124, 58, 237, 0.7);
+    }
+
+    .btn-hero-secondary {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 14px 28px;
+      border-radius: 9999px;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      color: var(--text-white);
+      font-size: 0.9rem;
+      font-weight: 500;
+      text-decoration: none;
+      transition: all 0.3s ease;
+    }
+
+    .btn-hero-secondary:hover {
+      background: rgba(255, 255, 255, 0.08);
+      border-color: rgba(255, 255, 255, 0.25);
+    }
+
+    /* MOCKUP DEVELOPER EDITOR FRAME & PERSPECTIVE GRID FLOOR */
+    .mockup-container {
+      position: relative;
+      max-width: 1040px;
+      margin: 0 auto;
+    }
+
+    /* 3D Wireframe Perspective Grid Floor */
+    .perspective-grid-floor {
+      position: absolute;
+      bottom: -70px;
+      left: -12%;
+      right: -12%;
+      height: 260px;
+      background: 
+        linear-gradient(to bottom, rgba(3, 3, 18, 0) 0%, rgba(3, 3, 18, 0.95) 100%),
+        repeating-linear-gradient(0deg, transparent, transparent 19px, rgba(124, 58, 237, 0.12) 20px),
+        repeating-linear-gradient(90deg, transparent, transparent 39px, rgba(124, 58, 237, 0.12) 40px);
+      transform: perspective(400px) rotateX(60deg);
+      transform-origin: bottom center;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .editor-card {
+      position: relative;
+      z-index: 1;
+      background: rgba(12, 12, 30, 0.88);
+      border-radius: 24px;
+      border: 1px solid var(--border-purple);
+      box-shadow: 0 0 100px -15px rgba(124, 58, 237, 0.4), 0 35px 100px rgba(0, 0, 0, 0.9);
+      overflow: hidden;
+      text-align: left;
+      backdrop-filter: blur(24px);
+      -webkit-backdrop-filter: blur(24px);
+    }
+
+    .editor-header {
+      background: rgba(15, 15, 36, 0.95);
+      padding: 14px 22px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+
+    .mac-dots {
+      display: flex;
+      gap: 8px;
+    }
+
+    .mac-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+    }
+
+    .mac-dot-red { background: #FF5F56; border: 0.5px solid #E0443E; }
+    .mac-dot-yellow { background: #FFBD2E; border: 0.5px solid #DEA123; }
+    .mac-dot-green { background: #27C93F; border: 0.5px solid #1AAB29; }
+
+    .editor-title {
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .editor-status-badge {
+      font-size: 0.72rem;
+      padding: 3px 10px;
+      border-radius: 99px;
+      background: rgba(16, 185, 129, 0.15);
+      color: var(--emerald-status);
+      font-weight: 600;
+      border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+
+    .editor-body {
+      display: grid;
+      grid-template-columns: 260px 1fr;
+      min-height: 490px;
+    }
+
+    /* Sidebar File Explorer */
+    .editor-sidebar {
+      background: rgba(8, 8, 22, 0.95);
+      border-right: 1px solid var(--border-subtle);
+      padding: 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .sidebar-heading {
+      font-size: 0.68rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--text-dim);
+      margin-bottom: 10px;
+    }
+
+    .tree-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 10px;
+      border-radius: 6px;
+      font-size: 0.8rem;
+      font-family: var(--font-mono);
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .tree-item:hover {
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--text-white);
+    }
+
+    .tree-item.active {
+      background: rgba(124, 58, 237, 0.18);
+      border: 1px solid rgba(124, 58, 237, 0.4);
+      color: var(--purple-lavender);
+    }
+
+    .tree-badge {
+      font-size: 0.65rem;
+      padding: 1px 6px;
+      border-radius: 4px;
+      background: rgba(255, 255, 255, 0.08);
+      color: var(--text-muted);
+    }
+
+    /* Main IDE Editor Panel */
+    .editor-main {
+      display: flex;
+      flex-direction: column;
+      background: #040410;
+    }
+
+    .editor-tabs {
+      display: flex;
+      background: rgba(12, 12, 30, 0.95);
+      border-bottom: 1px solid var(--border-subtle);
+      padding: 0 16px;
+      gap: 8px;
+    }
+
+    .tab-btn {
+      padding: 12px 18px;
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      background: transparent;
+      border: none;
+      border-bottom: 2px solid transparent;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .tab-btn:hover {
+      color: var(--text-white);
+    }
+
+    .tab-btn.active {
+      color: var(--purple-light);
+      border-bottom-color: var(--purple-primary);
+      background: rgba(124, 58, 237, 0.08);
+    }
+
+    .editor-content {
+      padding: 20px;
+      flex: 1;
+    }
+
+    /* ==========================================
+       3. BENTO FEATURE GRID
+       ========================================== */
+    .bento-section {
+      padding: 140px 0 90px 0;
+    }
+
+    .section-header-center {
+      text-align: center;
+      max-width: 720px;
+      margin: 0 auto 64px auto;
+    }
+
+    .section-eyebrow {
+      font-size: 0.76rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.18em;
+      color: var(--purple-light);
+      margin-bottom: 12px;
+    }
+
+    .section-title {
+      font-size: 2.8rem;
+      font-weight: 500;
+      letter-spacing: -0.02em;
+      margin-bottom: 16px;
+      line-height: 1.2;
+    }
+
+    .section-desc {
+      font-size: 1.05rem;
+      color: var(--text-muted);
+      line-height: 1.6;
+    }
+
+    .bento-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 28px;
+    }
+
+    .bento-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: 24px;
+      padding: 40px;
+      position: relative;
+      overflow: hidden;
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      transition: all 0.35 cubic-bezier(0.16, 1, 0.3, 1);
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      min-height: 320px;
+    }
+
+    .bento-card:hover {
+      border-color: rgba(124, 58, 237, 0.45);
+      transform: translateY(-4px);
+      box-shadow: 0 25px 60px -10px rgba(0, 0, 0, 0.85), 0 0 35px rgba(124, 58, 237, 0.18);
+    }
+
+    .bento-card-title {
+      font-size: 1.35rem;
+      font-weight: 600;
+      margin-bottom: 12px;
+    }
+
+    .bento-card-desc {
+      font-size: 0.94rem;
+      color: var(--text-muted);
+      line-height: 1.6;
+      margin-bottom: 24px;
+    }
+
+    /* Bento 1 Code Box */
+    .bento-code-preview {
+      background: #03030e;
+      border: 1px solid var(--border-subtle);
+      border-radius: 12px;
+      padding: 16px;
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      color: var(--purple-light);
+      line-height: 1.6;
+    }
+
+    /* Bento 2 3D Gem Graphic */
+    .gem-wrapper {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 12px 0;
+    }
+
+    .gem-svg-icon {
+      width: 140px;
+      height: 140px;
+      filter: drop-shadow(0 0 30px rgba(124, 58, 237, 0.65));
+      animation: floatGem 6s ease-in-out infinite;
+    }
+
+    @keyframes floatGem {
+      0%, 100% { transform: translateY(0) rotate(0deg); }
+      50% { transform: translateY(-10px) rotate(4deg); }
+    }
+
+    /* Bento 3 Node Diagram */
+    .node-diagram {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      padding: 16px 0;
+    }
+
+    .node-pill {
+      width: 46px;
+      height: 46px;
+      border-radius: 50%;
+      background: rgba(124, 58, 237, 0.15);
+      border: 1px solid rgba(124, 58, 237, 0.4);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.75rem;
+      font-weight: 700;
+      color: var(--purple-lavender);
+    }
+
+    .node-pill.center {
+      width: 64px;
+      height: 64px;
+      background: var(--gradient-purple-btn);
+      box-shadow: 0 0 35px rgba(124, 58, 237, 0.65);
+      font-size: 0.85rem;
+    }
+
+    /* Bento 4 Toggle Controls */
+    .toggle-list {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--border-subtle);
+      padding: 12px 16px;
+      border-radius: 10px;
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+
+    .status-badge-active {
+      font-size: 0.72rem;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 4px;
+      background: rgba(16, 185, 129, 0.18);
+      color: var(--emerald-status);
+      border: 1px solid rgba(16, 185, 129, 0.35);
+    }
+
+    /* ==========================================
+       4. LARGE HORIZONTAL FEATURE SHOWCASE
+       ========================================== */
+    .large-showcase-section {
+      padding: 100px 0;
+    }
+
+    .large-showcase-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-purple);
+      border-radius: 28px;
+      padding: 48px;
+      box-shadow: 0 0 80px -10px rgba(124, 58, 237, 0.25);
+      backdrop-filter: blur(24px);
+    }
+
+    .showcase-inner-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 40px;
+      align-items: center;
+    }
+
+    /* ==========================================
+       5. FEATURE CAROUSEL SHOWCASE
+       ========================================== */
+    .carousel-section {
+      padding: 120px 0;
+      text-align: center;
+    }
+
+    .carousel-wrapper {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 24px;
+      margin-top: 50px;
+      position: relative;
+    }
+
+    .carousel-card-item {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: 24px;
+      padding: 36px;
+      width: 320px;
+      opacity: 0.45;
+      transform: scale(0.88);
+      transition: all 0.45s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .carousel-card-item.active {
+      opacity: 1;
+      transform: scale(1.06);
+      width: 460px;
+      border-color: var(--border-purple-glow);
+      box-shadow: 0 0 70px rgba(124, 58, 237, 0.35);
+      background: rgba(18, 18, 42, 0.95);
+    }
+
+    .carousel-card-item h3 {
+      font-size: 1.35rem;
+      font-weight: 600;
+      margin-bottom: 12px;
+    }
+
+    .carousel-card-item p {
+      font-size: 0.92rem;
+      color: var(--text-muted);
+      margin-bottom: 24px;
+      line-height: 1.6;
+    }
+
+    .carousel-dots {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 10px;
+      margin-top: 36px;
+    }
+
+    .carousel-dot-btn {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.2);
+      cursor: pointer;
+      border: none;
+      transition: all 0.3s ease;
+    }
+
+    .carousel-dot-btn.active {
+      background: var(--purple-glow);
+      width: 28px;
+      border-radius: 9999px;
+    }
+
+    .carousel-arrow-btn {
+      width: 42px;
+      height: 42px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-white);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .carousel-arrow-btn:hover {
+      background: rgba(124, 58, 237, 0.2);
+      border-color: rgba(124, 58, 237, 0.5);
+    }
+
+    /* ==========================================
+       6. FRONT-END TESTING / SHARING SECTION
+       ========================================== */
+    .dual-showcase-section {
+      padding: 120px 0;
+    }
+
+    .dual-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 32px;
+    }
+
+    .dual-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: 24px;
+      padding: 40px;
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      transition: all 0.3s ease;
+    }
+
+    .dual-card:hover {
+      border-color: rgba(124, 58, 237, 0.4);
+      box-shadow: 0 0 50px rgba(124, 58, 237, 0.2);
+    }
+
+    .dual-card h3 {
+      font-size: 1.4rem;
+      font-weight: 600;
+      margin-bottom: 12px;
+    }
+
+    .dual-card p {
+      font-size: 0.95rem;
+      color: var(--text-muted);
+      margin-bottom: 24px;
+    }
+
+    .code-editor-box {
+      background: #03030c;
+      border: 1px solid var(--border-subtle);
+      border-radius: 12px;
+      padding: 18px;
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      color: #D1D5DB;
+      line-height: 1.6;
+    }
+
+    .code-row {
+      display: flex;
+      gap: 16px;
+    }
+
+    .num {
+      color: var(--text-dim);
+      user-select: none;
+      width: 20px;
+      text-align: right;
+    }
+
+    .kw { color: var(--purple-light); font-weight: 600; }
+    .str { color: #34D399; }
+    .cm { color: #6B7280; font-style: italic; }
+
+    /* ==========================================
+       7. FINAL CTA WITH 3D DEVELOPER ORB
+       ========================================== */
+    .final-cta-section {
+      padding: 150px 0 110px 0;
+      text-align: center;
+      position: relative;
+    }
+
+    .floating-orb-wrapper {
+      margin: 0 auto 32px auto;
+      width: 130px;
+      height: 130px;
+      position: relative;
+    }
+
+    .developer-orb-3d {
+      width: 130px;
+      height: 130px;
+      border-radius: 50%;
+      background: radial-gradient(circle at 35% 35%, #F3E8FF 0%, #8B5CF6 38%, #4C1D95 78%, #030312 100%);
+      box-shadow: 0 0 80px rgba(139, 92, 246, 0.75), inset 0 0 25px rgba(255, 255, 255, 0.6);
+      animation: floatOrb 4.5s ease-in-out infinite;
+    }
+
+    @keyframes floatOrb {
+      0%, 100% { transform: scale(1) translateY(0); box-shadow: 0 0 80px rgba(139, 92, 246, 0.75); }
+      50% { transform: scale(1.06) translateY(-8px); box-shadow: 0 0 110px rgba(139, 92, 246, 0.95); }
+    }
+
+    .cta-heading {
+      font-size: 3.2rem;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      margin-bottom: 18px;
+    }
+
+    .cta-subhead {
+      font-size: 1.1rem;
+      color: var(--text-muted);
+      max-width: 640px;
+      margin: 0 auto 40px auto;
+    }
+
+    /* ==========================================
+       8. FOOTER
+       ========================================== */
+    .footer {
+      border-top: 1px solid var(--border-subtle);
+      padding: 80px 0 45px 0;
+      background: #02020a;
+      position: relative;
+    }
+
+    .footer-grid {
+      display: grid;
+      grid-template-columns: 2fr repeat(4, 1fr);
+      gap: 40px;
+      margin-bottom: 60px;
+    }
+
+    .footer-brand p {
+      font-size: 0.88rem;
+      color: var(--text-muted);
+      margin-top: 14px;
+      max-width: 320px;
+    }
+
+    .footer-column h4 {
+      font-size: 0.82rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--text-white);
+      margin-bottom: 18px;
+    }
+
+    .footer-column ul {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .footer-column a {
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 0.88rem;
+      transition: color 0.2s ease;
+    }
+
+    .footer-column a:hover {
+      color: var(--text-white);
+    }
+
+    .footer-bottom {
+      border-top: 1px solid rgba(255, 255, 255, 0.05);
+      padding-top: 28px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.82rem;
+      color: var(--text-dim);
+    }
+
+    .bottom-purple-arc {
+      position: absolute;
+      bottom: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 700px;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, var(--purple-glow), transparent);
+      box-shadow: 0 0 24px var(--purple-glow);
+    }
+
+    /* Responsive Controls */
+    @media (max-width: 1024px) {
+      .hero-heading { font-size: 2.8rem; }
+      .bento-grid { grid-template-columns: 1fr; }
+      .dual-grid { grid-template-columns: 1fr; }
+      .editor-body { grid-template-columns: 1fr; }
+      .editor-sidebar { display: none; }
+      .showcase-inner-grid { grid-template-columns: 1fr; }
+      .footer-grid { grid-template-columns: 1fr 1fr; }
+    }
+
+    @media (max-width: 768px) {
+      .nav-links { display: none; }
+      .hero-heading { font-size: 2.2rem; }
+      .cta-heading { font-size: 2.2rem; }
+      .carousel-card-item { width: 280px; }
+      .carousel-card-item.active { width: 340px; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Ambient Cinematic Background Glows -->
+  <div class="ambient-glow glow-hero-top"></div>
+  <div class="ambient-glow glow-mid-section"></div>
+  <div class="ambient-glow glow-cta-bottom"></div>
+
+  <!-- 1. TOP NAVIGATION BAR -->
+  <header class="navbar">
+    <div class="container nav-content">
+      <a href="#" class="logo">
+        <div class="logo-icon">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#E9D5FF" stroke-width="2.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
+        </div>
+        SIGMA
+      </a>
+
+      <ul class="nav-links">
+        <li><a href="#features">Capabilities</a></li>
+        <li><a href="#workbench">Workbench</a></li>
+        <li><a href="#showcase">Platform</a></li>
+        <li><a href="#benchmarks">Off-Air Tests</a></li>
+        <li><a href="#code">Architecture</a></li>
+      </ul>
+
+      <div class="nav-actions">
+        <a href="https://github.com/SumitKumar00113/sigma-signal-analysis" target="_blank" class="btn-nav-github">GitHub</a>
+        <a href="https://github.com/SumitKumar00113/sigma-signal-analysis/releases/latest" class="btn-nav-primary">
+          Download App
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <!-- 1. HERO SECTION -->
+  <section class="hero">
+    <div class="container">
+      <a href="https://github.com/SumitKumar00113/sigma-signal-analysis/releases/latest" class="hero-eyebrow">
+        <span>⚡ Phase 3 Released • Windows & macOS Desktop Support</span>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>
+      </a>
+
+      <h1 class="hero-heading">
+        The Best Place To Ingest, Classify, And Decode <span class="highlight">RF Signal Baseband.</span>
+      </h1>
+
+      <p class="hero-subhead">
+        A PROFESSIONAL DESKTOP PLATFORM FOR RF ENGINEERS, SIGINT ANALYSTS, AND SDR DEVELOPERS
+      </p>
+
+      <div class="hero-cta-group">
+        <a href="https://github.com/SumitKumar00113/sigma-signal-analysis/releases/latest" class="btn-hero-primary">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-13.051-1.8"/></svg>
+          Download for Windows (.exe)
+        </a>
+        <a href="https://github.com/SumitKumar00113/sigma-signal-analysis/releases/latest" class="btn-hero-secondary">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.81-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M15.97 6.32c.62-.75 1.04-1.8 0.92-2.85-.9.04-2 .6-2.65 1.36-.58.68-1.09 1.77-.95 2.81 1.01.08 2.06-.57 2.68-1.32z"/></svg>
+          Download for macOS (.dmg)
+        </a>
+      </div>
+
+      <!-- MOCKUP DEVELOPER EDITOR PREVIEW -->
+      <div class="mockup-container" id="workbench">
+        <div class="perspective-grid-floor"></div>
+
+        <div class="editor-card">
+          <!-- Window Bar -->
+          <div class="editor-header">
+            <div class="mac-dots">
+              <span class="mac-dot mac-dot-red"></span>
+              <span class="mac-dot mac-dot-yellow"></span>
+              <span class="mac-dot mac-dot-green"></span>
+            </div>
+            <div class="editor-title">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+              SIGMA Signal Analysis v3.0 - [navtex_518kHz_sitor_b.wav]
+            </div>
+            <div class="editor-status-badge">
+              ● ANALYSED • 2-FSK 100 Bd
+            </div>
+          </div>
+
+          <!-- Editor Body -->
+          <div class="editor-body">
+            <!-- File Explorer Sidebar -->
+            <div class="editor-sidebar">
+              <div>
+                <div class="sidebar-heading">Off-Air Captures</div>
+                <div class="tree-item active" onclick="switchMockupFile('navtex')">
+                  <span>📄 navtex_518kHz.wav</span>
+                  <span class="tree-badge">SITOR-B</span>
+                </div>
+                <div class="tree-item" onclick="switchMockupFile('rs41')">
+                  <span>📄 rs41_radiosonde.iq</span>
+                  <span class="tree-badge">GFSK</span>
+                </div>
+                <div class="tree-item" onclick="switchMockupFile('noaa')">
+                  <span>📄 noaa18_apt.sigmf</span>
+                  <span class="tree-badge">FM Sub</span>
+                </div>
+                <div class="tree-item" onclick="switchMockupFile('rtty')">
+                  <span>📄 dwd_rtty_50bd.wav</span>
+                  <span class="tree-badge">Baudot</span>
+                </div>
+              </div>
+
+              <div>
+                <div class="sidebar-heading">DSP Parameters</div>
+                <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border-subtle); padding: 12px; border-radius: 8px; font-family: var(--font-mono); font-size: 0.75rem; display: flex; flex-direction: column; gap: 6px;">
+                  <div>SNR: <span id="dsp-snr" style="color: var(--cyan-subtle);">15.2 dB</span></div>
+                  <div>Carrier: <span id="dsp-cfo" style="color: var(--cyan-subtle);">+1842.3 Hz</span></div>
+                  <div>Rate: <span id="dsp-rate" style="color: var(--cyan-subtle);">100.00 Bd</span></div>
+                  <div id="dsp-class" style="color: var(--purple-light); font-weight: 600; margin-top: 4px;">2-FSK (Hybrid 99.8%)</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Main Panel Viewers -->
+            <div class="editor-main">
+              <div class="editor-tabs">
+                <button class="tab-btn active" onclick="setMockupTab('psd', this)">Spectrum & Waterfall</button>
+                <button class="tab-btn" onclick="setMockupTab('const', this)">Constellation & EVM</button>
+                <button class="tab-btn" onclick="setMockupTab('decode', this)">Decoding Workbench</button>
+              </div>
+
+              <div class="editor-content">
+                <!-- TAB 1: Spectrum & Waterfall (Interactive Animated HTML5 Canvas) -->
+                <div id="mockup-view-psd">
+                  <div style="background: #020208; border: 1px solid var(--border-subtle); border-radius: 12px; padding: 12px; position: relative; overflow: hidden;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-family: var(--font-mono); font-size: 0.72rem; color: var(--text-muted);">
+                      <span>FFT REAL-TIME BASEBAND SCAN (BW: 48 kHz)</span>
+                      <span style="color: var(--cyan-subtle); display: flex; align-items: center; gap: 6px;">
+                        <span style="width: 6px; height: 6px; border-radius: 50%; background: #10B981; display: inline-block;"></span>
+                        LIVE FFT • 60 FPS
+                      </span>
+                    </div>
+                    <canvas id="spectrumCanvas" width="600" height="150" style="width: 100%; height: 150px; display: block; border-radius: 6px;"></canvas>
+                  </div>
+                </div>
+
+                <!-- TAB 2: Constellation & EVM (Interactive Animated Canvas) -->
+                <div id="mockup-view-const" style="display: none;">
+                  <div style="background: #020208; border: 1px solid var(--border-subtle); border-radius: 12px; padding: 16px; display: flex; align-items: center; justify-content: space-around; gap: 16px; flex-wrap: wrap;">
+                    <div style="position: relative;">
+                      <canvas id="constellationCanvas" width="180" height="180" style="width: 180px; height: 180px; display: block; border-radius: 50%; border: 1px solid rgba(139, 92, 246, 0.3); background: #010107;"></canvas>
+                    </div>
+                    <div style="font-family: var(--font-mono); font-size: 0.78rem; color: var(--text-muted); min-width: 200px;">
+                      <div style="color: var(--purple-light); font-weight: 600; font-size: 0.88rem; margin-bottom: 8px;">Demodulator EVM & Phase</div>
+                      <div style="margin-bottom: 4px;">RMS EVM: <span id="evm-val" style="color: #34D399; font-weight: 600;">3.42 %</span></div>
+                      <div style="margin-bottom: 4px;">Peak EVM: <span id="evm-peak" style="color: #38BDF8;">6.18 %</span></div>
+                      <div style="margin-bottom: 4px;">Phase Jitter: <span id="phase-err" style="color: #34D399;">0.84°</span></div>
+                      <div style="margin-bottom: 4px;">Costas Lock: <span id="costas-lock" style="color: #10B981; font-weight: 600;">LOCKED (100%)</span></div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- TAB 3: Decoding Workbench Terminal -->
+                <div id="mockup-view-decode" style="display: none;">
+                  <div style="background: #010105; border: 1px solid rgba(16,185,129,0.35); border-radius: 10px; padding: 16px; font-family: var(--font-mono); font-size: 0.78rem; color: #34D399; line-height: 1.65; box-shadow: inset 0 0 20px rgba(16,185,129,0.05);">
+                    <div id="decoded-terminal-text">
+                      ZCZC EA33 280800 UTC FEB 23<br/>
+                      NITON RADIO (E) - NAVIGATIONAL WARNING<br/>
+                      EDDYSTONE ROCKS LIGHTHOUSE E1 BUOY UNLIT.<br/>
+                      NNNN
+                    </div>
+                    <div id="decoded-status-line" style="color: #A7F3D0; font-weight: 600; margin-top: 10px; border-top: 1px stroke rgba(16,185,129,0.2); padding-top: 6px;">
+                      ✔ 10/10 NAVTEX Messages Decoded • BER 0.00%
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3. BENTO FEATURE SECTION -->
+  <section class="bento-section" id="features">
+    <div class="container">
+      <div class="section-header-center">
+        <div class="section-eyebrow">All-In-One Platform</div>
+        <h2 class="section-title">All Of Your Signals In One Place</h2>
+        <p class="section-desc">A unified desktop environment engineered for RF inspection and blind telemetry decoding.</p>
+      </div>
+
+      <div class="bento-grid">
+        <!-- Bento Card 1 -->
+        <div class="bento-card">
+          <div>
+            <h3 class="bento-card-title">Real-Signal Ingestion & Hilbert DSP</h3>
+            <p class="bento-card-desc">
+              Ingest `.wav` (Mono/Stereo IQ), raw `.iq`, and `.sigmf` files. Mono audio files automatically run through a 255-tap Hilbert FIR filter with >80 dB image rejection.
+            </p>
+          </div>
+          <div class="bento-code-preview">
+            from src.ingestion import FileReader<br/>
+            reader = FileReader.from_file("recording.wav")<br/>
+            iq_data = reader.read_analytic_signal() # >80dB Rejection
+          </div>
+        </div>
+
+        <!-- Bento Card 2 -->
+        <div class="bento-card">
+          <div>
+            <h3 class="bento-card-title">Hybrid ML Modulation Classifier</h3>
+            <p class="bento-card-desc">
+              Identifies 18 modulation types (PSK, QAM, FSK, MSK, GMSK, ASK, AM, FM, SSB). Combines explainable rules with a 38-feature gradient-boosted model achieving 99% accuracy at 4 dB.
+            </p>
+          </div>
+          <div class="gem-wrapper">
+            <!-- 3D Iridescent Gem SVG -->
+            <svg class="gem-svg-icon" viewBox="0 0 100 100">
+              <polygon points="50,5 90,30 90,70 50,95 10,70 10,30" fill="url(#gemGrad1)" stroke="rgba(255,255,255,0.4)" stroke-width="1.5"/>
+              <polygon points="50,5 50,95 90,30" fill="url(#gemGrad2)" opacity="0.7"/>
+              <polygon points="50,5 10,30 50,95" fill="url(#gemGrad3)" opacity="0.6"/>
+              <defs>
+                <linearGradient id="gemGrad1" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#C084FC"/>
+                  <stop offset="50%" stop-color="#4F46E5"/>
+                  <stop offset="100%" stop-color="#8B5CF6"/>
+                </linearGradient>
+                <linearGradient id="gemGrad2" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#FFFFFF"/>
+                  <stop offset="100%" stop-color="#7C3AED"/>
+                </linearGradient>
+                <linearGradient id="gemGrad3" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#38BDF8"/>
+                  <stop offset="100%" stop-color="#4C1D95"/>
+                </linearGradient>
+              </defs>
+            </svg>
+          </div>
+        </div>
+
+        <!-- Bento Card 3 -->
+        <div class="bento-card">
+          <div>
+            <h3 class="bento-card-title">Demodulation & Audio Recovery</h3>
+            <p class="bento-card-desc">
+              Digital demodulation with RRC matched filtering, Gardner timing, Costas loop, EVM analysis, and 8 kHz audio output for AM/FM/SSB voice communications.
+            </p>
+          </div>
+          <div class="node-diagram">
+            <div class="node-pill">PSK</div>
+            <div class="node-pill">FSK</div>
+            <div class="node-pill center">DEMOD</div>
+            <div class="node-pill">QAM</div>
+            <div class="node-pill">AUDIO</div>
+          </div>
+        </div>
+
+        <!-- Bento Card 4 -->
+        <div class="bento-card">
+          <div>
+            <h3 class="bento-card-title">One-Click Auto-Analyse Pipeline</h3>
+            <p class="bento-card-desc">
+              Automated end-to-end processing chain: ingestion → parameters → hybrid ML → demodulation → blind interleaver/FEC scan → frame sync discovery.
+            </p>
+          </div>
+          <div class="toggle-list">
+            <div class="toggle-row">
+              <span>Blind FEC Code Identification</span>
+              <span class="status-badge-active">ACTIVE</span>
+            </div>
+            <div class="toggle-row">
+              <span>Interleaver Stride & Comb Search</span>
+              <span class="status-badge-active">ACTIVE</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 4. LARGE HORIZONTAL FEATURE SHOWCASE -->
+  <section class="large-showcase-section" id="showcase">
+    <div class="container">
+      <div class="large-showcase-card">
+        <div class="showcase-inner-grid">
+          <div>
+            <div class="section-eyebrow">Integrated Pipeline</div>
+            <h2 class="section-title" style="font-size: 2.2rem;">Engineered For Complex Baseband Ingestion & Signal Analysis</h2>
+            <p class="section-desc" style="margin-bottom: 24px;">
+              Ingest baseband recordings with world-class DSP algorithms, robust noise floor estimation, and real-time visualization.
+            </p>
+            <a href="https://github.com/SumitKumar00113/sigma-signal-analysis/releases/latest" class="btn-hero-primary">
+              Explore Workbench Features
+            </a>
+          </div>
+
+          <div style="background: #020208; border: 1px solid var(--border-subtle); border-radius: 16px; padding: 20px;">
+            <div style="font-family: var(--font-mono); font-size: 0.78rem; color: var(--purple-light); margin-bottom: 12px;">
+              [PIPELINE_RUNNER] Ingestion → Parameters → Hybrid ML → Decoded Payload
+            </div>
+            <div style="background: #050514; border: 1px solid rgba(255,255,255,0.06); border-radius: 8px; padding: 12px; font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-muted); display: flex; flex-direction: column; gap: 8px;">
+              <div>✔ SNR PSD Estimate: <span style="color: #34D399;">15.2 dB</span></div>
+              <div>✔ Carrier Offset: <span style="color: #34D399;">+1,842.3 Hz</span></div>
+              <div>✔ Hybrid Classifier: <span style="color: #C084FC; font-weight: bold;">2-FSK (99.8% Confidence)</span></div>
+              <div>✔ Frame Sync Discovery: <span style="color: #38BDF8;">ZCZC ASM Found</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 5. FEATURE CAROUSEL SHOWCASE -->
+  <section class="carousel-section">
+    <div class="container">
+      <div class="section-header-center">
+        <div class="section-eyebrow">Workbench Suite</div>
+        <h2 class="section-title">Complete Signal Processing Chain</h2>
+        <p class="section-desc">Explore the specialized workbench engines powering SIGMA Signal Analysis.</p>
+      </div>
+
+      <div class="carousel-wrapper">
+        <!-- Flanking Card Left -->
+        <div class="carousel-card-item" id="c-card-0">
+          <h3>18-Class Hybrid Classifier</h3>
+          <p>38-feature gradient-boosted ML classifier combined with explainable decision rules.</p>
+        </div>
+
+        <!-- Active Center Card -->
+        <div class="carousel-card-item active" id="c-card-1">
+          <h3>⚡ Auto-Analyse Engine</h3>
+          <p>One-click background pipeline running parameter estimation, demodulation, interleaver scan, Viterbi/LDPC decoding, and sync discovery.</p>
+          <a href="https://github.com/SumitKumar00113/sigma-signal-analysis/releases/latest" class="btn-nav-primary">Explore Pipeline</a>
+        </div>
+
+        <!-- Flanking Card Right -->
+        <div class="carousel-card-item" id="c-card-2">
+          <h3>Blind Code Identification</h3>
+          <p>Blind identification of convolutional codes, Reed-Solomon GF(2⁸), and sparse LDPC matrices.</p>
+        </div>
+      </div>
+
+      <div class="carousel-dots">
+        <button class="carousel-arrow-btn" onclick="rotateCarousel(-1)">‹</button>
+        <button class="carousel-dot-btn" onclick="setCarousel(0)"></button>
+        <button class="carousel-dot-btn active" onclick="setCarousel(1)"></button>
+        <button class="carousel-dot-btn" onclick="setCarousel(2)"></button>
+        <button class="carousel-arrow-btn" onclick="rotateCarousel(1)">›</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 6. FRONT-END TESTING / SHARING SECTION -->
+  <section class="dual-showcase-section" id="benchmarks">
+    <div class="container">
+      <div class="section-header-center">
+        <div class="section-eyebrow">Field Proven</div>
+        <h2 class="section-title">A Signal Environment Built For Testing And Decoding</h2>
+        <p class="section-desc">Analyze raw baseband recordings, recover unknown FEC polynomials, and extract telemetry off-air.</p>
+      </div>
+
+      <div class="dual-grid">
+        <!-- Card 1 -->
+        <div class="dual-card">
+          <h3>Blind FEC Identification & Solvers</h3>
+          <p>Convolutional codes are identified from dual code parity checks across K=3..9. Stride scanning resolves block, diagonal, and pseudo-random interleavers.</p>
+          <div class="code-editor-box">
+            <div class="code-row"><span class="num">1</span><span class="kw">from</span> src.decoding.fec_id <span class="kw">import</span> identify_fec</div>
+            <div class="code-row"><span class="num">2</span>code = identify_fec(demod_bits)</div>
+            <div class="code-row"><span class="num">3</span><span class="cm"># Found: Conv K=7, Rate 1/2, BER: 0.00%</span></div>
+          </div>
+        </div>
+
+        <!-- Card 2 -->
+        <div class="dual-card">
+          <h3>Off-Air Telemetry & Image Recovery</h3>
+          <p>Built-in decoders for SITOR-B / NAVTEX marine warnings, Baudot RTTY, RS41 Radiosonde telemetry, and NOAA APT weather satellite imagery (FM subcarrier to PNG).</p>
+          <div class="code-editor-box">
+            <div class="code-row"><span class="num">1</span><span class="kw">from</span> src.decoding.apt <span class="kw">import</span> decode_apt</div>
+            <div class="code-row"><span class="num">2</span>img = decode_apt(<span class="str">"noaa18.wav"</span>)</div>
+            <div class="code-row"><span class="num">3</span><span class="cm"># Saved: noaa18_apt.png (1,097 Lines)</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 7. FINAL CTA WITH 3D DEVELOPER ORB -->
+  <section class="final-cta-section">
+    <div class="container">
+      <div class="floating-orb-wrapper">
+        <div class="developer-orb-3d"></div>
+      </div>
+
+      <h2 class="cta-heading">Ready To Join A New Dimension?</h2>
+      <p class="cta-subhead">
+        Get started with SIGMA Signal Analysis today on Windows or macOS. Download the desktop release or build from source.
+      </p>
+
+      <div style="display: flex; gap: 16px; justify-content: center; flex-wrap: wrap;">
+        <a href="https://github.com/SumitKumar00113/sigma-signal-analysis/releases/latest" class="btn-hero-primary">
+          Download for Windows (.exe)
+        </a>
+        <a href="https://github.com/SumitKumar00113/sigma-signal-analysis/releases/latest" class="btn-hero-secondary">
+          Download for macOS (.dmg)
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- 8. FOOTER -->
+  <footer class="footer">
+    <div class="bottom-purple-arc"></div>
+    <div class="container">
+      <div class="footer-grid">
+        <div class="footer-brand">
+          <a href="#" class="logo">
+            <div class="logo-icon">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#E9D5FF" stroke-width="2.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
+            </div>
+            SIGMA
+          </a>
+          <p>Advanced desktop platform for RF signal inspection, hybrid ML classification, and blind decoding on Windows and macOS.</p>
+        </div>
+
+        <div class="footer-column">
+          <h4>About</h4>
+          <ul>
+            <li><a href="#features">Capabilities</a></li>
+            <li><a href="#workbench">Workbench</a></li>
+            <li><a href="#showcase">Platform</a></li>
+          </ul>
+        </div>
+
+        <div class="footer-column">
+          <h4>Services</h4>
+          <ul>
+            <li><a href="#benchmarks">Off-Air Testing</a></li>
+            <li><a href="#code">Blind Code ID</a></li>
+            <li><a href="#features">Auto-Analyse</a></li>
+          </ul>
+        </div>
+
+        <div class="footer-column">
+          <h4>Use Cases</h4>
+          <ul>
+            <li><a>RF Signals Intelligence</a></li>
+            <li><a>Telemetry Decoding</a></li>
+            <li><a>SDR Research</a></li>
+          </ul>
+        </div>
+
+        <div class="footer-column">
+          <h4>Resources</h4>
+          <ul>
+            <li><a href="https://github.com/SumitKumar00113/sigma-signal-analysis" target="_blank">GitHub Repo</a></li>
+            <li><a href="https://github.com/SumitKumar00113/sigma-signal-analysis/releases" target="_blank">Releases</a></li>
+            <li><a href="https://github.com/SumitKumar00113/sigma-signal-analysis/issues" target="_blank">Issue Tracker</a></li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="footer-bottom">
+        <div>© 2026 SIGMA Signal Analysis. All rights reserved.</div>
+        <div>Built for RF Engineers & SIGINT Analysts</div>
+      </div>
+    </div>
+  </footer>
+
+  <!-- INTERACTIVE SCRIPTS -->
+  <script>
+    // Selected profile state
+    let currentFile = 'navtex';
+
+    function setMockupTab(tabId, btn) {
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+
+      document.getElementById('mockup-view-psd').style.display = (tabId === 'psd') ? 'block' : 'none';
+      document.getElementById('mockup-view-const').style.display = (tabId === 'const') ? 'block' : 'none';
+      document.getElementById('mockup-view-decode').style.display = (tabId === 'decode') ? 'block' : 'none';
+    }
+
+    const fileProfiles = {
+      navtex: {
+        snr: '15.2 dB', cfo: '+1842.3 Hz', rate: '100.00 Bd', cls: '2-FSK (Hybrid 99.8%)',
+        evm: '3.42 %', evmPeak: '6.18 %', phaseErr: '0.84°', lock: 'LOCKED (100%)',
+        peaks: [0.42, 0.58],
+        decodedText: `ZCZC EA33 280800 UTC FEB 23<br/>NITON RADIO (E) - NAVIGATIONAL WARNING<br/>EDDYSTONE ROCKS LIGHTHOUSE E1 BUOY UNLIT.<br/>NNNN`,
+        decodedStatus: `✔ 10/10 NAVTEX Messages Decoded • BER 0.00%`
+      },
+      rs41: {
+        snr: '12.4 dB', cfo: '-3120.0 Hz', rate: '4800.0 Bd', cls: 'GFSK (Hybrid 99.9%)',
+        evm: '4.15 %', evmPeak: '7.92 %', phaseErr: '1.12°', lock: 'LOCKED (99.9%)',
+        peaks: [0.35, 0.65],
+        decodedText: `[RS41-SG SONDE TELEMETRY]<br/>FRAME #1842 • ID: W3420194<br/>LAT: 52.5200° N • LON: 13.4050° E • ALT: 18,420m<br/>TEMP: -52.4°C • PRESS: 64.2 hPa • HUM: 12%`,
+        decodedStatus: `✔ RS41 Vaisala Telemetry Frame Sync OK • CRC PASS`
+      },
+      noaa: {
+        snr: '18.7 dB', cfo: '+0.0 Hz', rate: '2.00 Hz', cls: 'FM / Subcarrier (100%)',
+        evm: '1.85 %', evmPeak: '3.10 %', phaseErr: '0.45°', lock: 'LOCKED (100%)',
+        peaks: [0.50],
+        decodedText: `[NOAA-18 APT SATELLITE IMAGE DECODER]<br/>Carrier Freq: 137.9125 MHz • Video Subcarrier: 2400 Hz<br/>Line Rate: 2 Hz (120 LPM) • Sync A: 2080 Hz • Sync B: 1600 Hz<br/>Status: 1097 Lines Rasterized to PNG Format`,
+        decodedStatus: `✔ NOAA APT Telemetry & Image Frame Extracted`
+      },
+      rtty: {
+        snr: '14.1 dB', cfo: '+450.0 Hz', rate: '50.00 Bd', cls: '2-FSK / Baudot (99.5%)',
+        evm: '3.88 %', evmPeak: '6.45 %', phaseErr: '0.92°', lock: 'LOCKED (100%)',
+        peaks: [0.45, 0.55],
+        decodedText: `ZCZC CQ CQ CQ DE DWD OFFENBACH<br/>GERMAN WEATHER SERVICE MARINE BULLETIN<br/>BALTIC SEA: SW 4 TO 5, INCREASING 6 LATER. SHOWERS.<br/>NNNN`,
+        decodedStatus: `✔ DWD RTTY Baudot Code Shift 450Hz Decoded`
+      }
+    };
+
+    function switchMockupFile(fileKey) {
+      currentFile = fileKey;
+      const items = document.querySelectorAll('.tree-item');
+      items.forEach(item => item.classList.remove('active'));
+
+      const prof = fileProfiles[fileKey];
+      if (!prof) return;
+
+      if (fileKey === 'navtex') items[0].classList.add('active');
+      else if (fileKey === 'rs41') items[1].classList.add('active');
+      else if (fileKey === 'noaa') items[2].classList.add('active');
+      else if (fileKey === 'rtty') items[3].classList.add('active');
+
+      document.getElementById('dsp-snr').innerText = prof.snr;
+      document.getElementById('dsp-cfo').innerText = prof.cfo;
+      document.getElementById('dsp-rate').innerText = prof.rate;
+      document.getElementById('dsp-class').innerText = prof.cls;
+
+      document.getElementById('evm-val').innerText = prof.evm;
+      document.getElementById('evm-peak').innerText = prof.evmPeak;
+      document.getElementById('phase-err').innerText = prof.phaseErr;
+      document.getElementById('costas-lock').innerText = prof.lock;
+
+      document.getElementById('decoded-terminal-text').innerHTML = prof.decodedText;
+      document.getElementById('decoded-status-line').innerText = prof.decodedStatus;
+    }
+
+    // ----------------------------------------------------
+    // REAL-TIME HTML5 CANVAS ANIMATION: SPECTRUM & FFT
+    // ----------------------------------------------------
+    const specCanvas = document.getElementById('spectrumCanvas');
+    const specCtx = specCanvas.getContext('2d');
+    let animTime = 0;
+
+    function renderSpectrum() {
+      if (!specCanvas) return;
+      const w = specCanvas.width;
+      const h = specCanvas.height;
+
+      specCtx.fillStyle = '#020208';
+      specCtx.fillRect(0, 0, w, h);
+
+      // Grid lines
+      specCtx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+      specCtx.lineWidth = 1;
+      for (let y = 30; y < h; y += 30) {
+        specCtx.beginPath();
+        specCtx.moveTo(0, y);
+        specCtx.lineTo(w, y);
+        specCtx.stroke();
+      }
+      for (let x = 100; x < w; x += 100) {
+        specCtx.beginPath();
+        specCtx.moveTo(x, 0);
+        specCtx.lineTo(x, h);
+        specCtx.stroke();
+      }
+
+      animTime += 0.05;
+      const prof = fileProfiles[currentFile] || fileProfiles.navtex;
+
+      // Draw FFT line
+      specCtx.beginPath();
+      const numPoints = 120;
+      for (let i = 0; i <= numPoints; i++) {
+        const x = (i / numPoints) * w;
+        const normX = i / numPoints;
+        
+        let noise = Math.sin(i * 0.8 + animTime) * 3 + (Math.random() - 0.5) * 4;
+        let signalAmp = 0;
+
+        prof.peaks.forEach(peakX => {
+          const dist = Math.abs(normX - peakX);
+          if (dist < 0.08) {
+            signalAmp += Math.exp(-Math.pow(dist / 0.025, 2)) * 95;
+          }
+        });
+
+        const y = h - 20 - signalAmp - noise;
+        if (i === 0) specCtx.moveTo(x, y);
+        else specCtx.lineTo(x, y);
+      }
+
+      const grad = specCtx.createLinearGradient(0, 0, w, 0);
+      grad.addColorStop(0, '#38BDF8');
+      grad.addColorStop(0.5, '#8B5CF6');
+      grad.addColorStop(1, '#E9D5FF');
+
+      specCtx.strokeStyle = grad;
+      specCtx.lineWidth = 2.5;
+      specCtx.stroke();
+
+      // Highlight peak box
+      if (prof.peaks.length > 0) {
+        const peakX = prof.peaks[0] * w;
+        specCtx.fillStyle = 'rgba(124, 58, 237, 0.12)';
+        specCtx.strokeStyle = 'rgba(139, 92, 246, 0.4)';
+        specCtx.setLineDash([4, 4]);
+        specCtx.fillRect(peakX - 35, 10, 70, h - 25);
+        specCtx.strokeRect(peakX - 35, 10, 70, h - 25);
+        specCtx.setLineDash([]);
+      }
+
+      requestAnimationFrame(renderSpectrum);
+    }
+    renderSpectrum();
+
+    // ----------------------------------------------------
+    // REAL-TIME HTML5 CANVAS ANIMATION: CONSTELLATION
+    // ----------------------------------------------------
+    const constCanvas = document.getElementById('constellationCanvas');
+    const constCtx = constCanvas.getContext('2d');
+    let constTime = 0;
+
+    function renderConstellation() {
+      if (!constCanvas) return;
+      const w = constCanvas.width;
+      const h = constCanvas.height;
+      const cx = w / 2;
+      const cy = h / 2;
+
+      constCtx.fillStyle = '#010107';
+      constCtx.fillRect(0, 0, w, h);
+
+      // Radial grid
+      constCtx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+      constCtx.lineWidth = 1;
+      constCtx.beginPath();
+      constCtx.arc(cx, cy, 65, 0, Math.PI * 2);
+      constCtx.stroke();
+      constCtx.beginPath();
+      constCtx.arc(cx, cy, 35, 0, Math.PI * 2);
+      constCtx.stroke();
+
+      // Axes
+      constCtx.beginPath();
+      constCtx.moveTo(cx, 10); constCtx.lineTo(cx, h - 10);
+      constCtx.moveTo(10, cy); constCtx.lineTo(w - 10, cy);
+      constCtx.stroke();
+
+      constTime += 0.03;
+      const prof = fileProfiles[currentFile] || fileProfiles.navtex;
+
+      // Draw constellation points cluster
+      constCtx.fillStyle = '#C084FC';
+      const numSymbols = 120;
+
+      let centers = [];
+      if (currentFile === 'navtex' || currentFile === 'rtty') {
+        centers = [{x: cx - 40, y: cy}, {x: cx + 40, y: cy}];
+      } else if (currentFile === 'rs41') {
+        centers = [{x: cx - 45, y: cy - 20}, {x: cx + 45, y: cy + 20}];
+      } else {
+        // Circle ring for FM subcarrier
+        for (let a = 0; a < Math.PI * 2; a += Math.PI / 4) {
+          centers.push({x: cx + Math.cos(a) * 50, y: cy + Math.sin(a) * 50});
+        }
+      }
+
+      for (let i = 0; i < numSymbols; i++) {
+        const c = centers[i % centers.length];
+        const jitterX = (Math.sin(i * 1.7 + constTime) * 3) + (Math.random() - 0.5) * 5;
+        const jitterY = (Math.cos(i * 2.3 + constTime) * 3) + (Math.random() - 0.5) * 5;
+
+        constCtx.beginPath();
+        constCtx.arc(c.x + jitterX, c.y + jitterY, 2, 0, Math.PI * 2);
+        constCtx.fill();
+      }
+
+      requestAnimationFrame(renderConstellation);
+    }
+    renderConstellation();
+
+    // ----------------------------------------------------
+    // CAROUSEL & SPOTLIGHT HOVER EFFECTS
+    // ----------------------------------------------------
+    let activeCarouselIdx = 1;
+    function setCarousel(idx) {
+      activeCarouselIdx = idx;
+      for (let i = 0; i < 3; i++) {
+        const card = document.getElementById('c-card-' + i);
+        const dot = document.querySelectorAll('.carousel-dot-btn')[i];
+        if (card && dot) {
+          if (i === idx) {
+            card.classList.add('active');
+            dot.classList.add('active');
+          } else {
+            card.classList.remove('active');
+            dot.classList.remove('active');
+          }
+        }
+      }
+    }
+
+    function rotateCarousel(dir) {
+      let nextIdx = activeCarouselIdx + dir;
+      if (nextIdx < 0) nextIdx = 2;
+      if (nextIdx > 2) nextIdx = 0;
+      setCarousel(nextIdx);
+    }
+
+    // Auto rotate carousel every 6s
+    setInterval(() => rotateCarousel(1), 6000);
+
+    // Mouse spotlight radial glow follow
+    document.querySelectorAll('.bento-card, .dual-card, .large-showcase-card').forEach(card => {
+      card.addEventListener('mousemove', e => {
+        const rect = card.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        card.style.setProperty('--mouse-x', `${x}px`);
+        card.style.setProperty('--mouse-y', `${y}px`);
+      });
+    });
+  </script>
+</body>
+</html>
