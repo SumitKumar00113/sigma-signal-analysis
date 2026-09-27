@@ -1,0 +1,59 @@
+name: Release macOS app
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  macos-app:
+    name: Build Sigma Signal Analysis.app
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install package and PyInstaller
+        run: pip install -e '.[gui,ml]' pyinstaller
+
+      - name: Build app bundle
+        run: pyinstaller --noconfirm --clean sigma.spec
+
+      - name: Self-test the bundle
+        run: |
+          HOME="$(mktemp -d)" "dist/Sigma Signal Analysis.app/Contents/MacOS/Sigma" --self-test
+
+      - name: Zip app
+        id: zip
+        run: |
+          VERSION=$(python -c "import src; print(src.__version__)")
+          if [[ "$GITHUB_REF" == refs/tags/v* && "$GITHUB_REF_NAME" != "v$VERSION" ]]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match src.__version__ ($VERSION)"
+            exit 1
+          fi
+          ZIP="Sigma-Signal-Analysis-${VERSION}-macOS-arm64.zip"
+          ditto -c -k --sequesterRsrc --keepParent "dist/Sigma Signal Analysis.app" "$ZIP"
+          echo "zip=$ZIP" >> "$GITHUB_OUTPUT"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-app
+          path: ${{ steps.zip.outputs.zip }}
+
+      - name: Attach to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
+            || gh release create "$GITHUB_REF_NAME" --title "Sigma $GITHUB_REF_NAME" --generate-notes
+          gh release upload "$GITHUB_REF_NAME" "${{ steps.zip.outputs.zip }}" --clobber

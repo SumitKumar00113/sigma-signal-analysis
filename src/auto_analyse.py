@@ -6,6 +6,7 @@
     python -m src.auto_analyse capture.wav
     python -m src.auto_analyse capture.iq --fs 250000 --dtype cf32_le
     python -m src.auto_analyse capture.iq --fs 250000 --save-bits out.bin --json report.json
+    python -m src.auto_analyse capture.wav --html report.html
 
 Runs the analysis pipeline (sample-rate check, burst detection,
 modulation classification, symbol rate, carrier, SNR, demodulation) and
@@ -141,6 +142,7 @@ def main(argv: list[str] | None = None) -> int:
                     help="also try the installed standard LDPC codes (~/.sigma/ldpc)")
     ap.add_argument("--save-bits", type=Path, help="write the final bit stream (packed bytes)")
     ap.add_argument("--json", type=Path, help="write the report as JSON")
+    ap.add_argument("--html", type=Path, help="write the full HTML analysis report")
     ap.add_argument("--text-out", type=Path, help="write decoded teleprinter text")
     ap.add_argument("--image-out", type=Path,
                     help="where to save a decoded NOAA APT image (default: <file>_apt.png)")
@@ -240,6 +242,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.json:
         args.json.write_text(json.dumps(_report(result, chain), indent=2), encoding="utf-8")
         log(f"Report written to {args.json}")
+    if args.html:
+        from src.reporting.exporter import export_html_report
+
+        export_html_report(meta, path=args.html, pipeline=result, decode=chain)
+        log(f"HTML report written to {args.html}")
     return 0
 
 
