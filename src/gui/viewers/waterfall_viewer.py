@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.dsp.spectral import compute_spectrogram
-from src.gui.theme import BG_DARKEST, TEXT_PRIMARY
+from src.gui.theme import BG_DARKEST, PLOT_BG, TEXT_PRIMARY
 
 # Colour map presets (viridis-like LUT)
 _COLORMAPS = {
@@ -46,7 +46,7 @@ class WaterfallViewer(QWidget):
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(4)
+        layout.setSpacing(8)
 
         # Controls
         controls = QHBoxLayout()
@@ -84,7 +84,7 @@ class WaterfallViewer(QWidget):
 
         # Image view
         pg.setConfigOptions(background=BG_DARKEST, foreground=TEXT_PRIMARY)
-        self._plot_widget = pg.PlotWidget()
+        self._plot_widget = pg.PlotWidget(background=PLOT_BG)
         self._plot_widget.setLabel("bottom", "Time", units="s")
         self._plot_widget.setLabel("left", "Frequency", units="Hz")
 
@@ -134,6 +134,15 @@ class WaterfallViewer(QWidget):
             text.setZValue(11)
             self._plot_widget.addItem(text)
             self._region_items += [rect, text]
+
+    def set_defaults(self, fft_size: int, colormap: str) -> None:
+        """Apply display defaults from the settings."""
+        self._fft_spin.blockSignals(True)
+        self._fft_spin.setValue(int(fft_size))
+        self._fft_spin.blockSignals(False)
+        if colormap in _COLORMAPS:
+            self._cmap_combo.setCurrentText(colormap)
+        self._update_plot()
 
     @property
     def region_count(self) -> int:

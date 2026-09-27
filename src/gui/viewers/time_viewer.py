@@ -17,7 +17,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from src.gui.theme import ACCENT_PRIMARY, ACCENT_SECONDARY, BG_DARKEST, TEXT_PRIMARY
+from src.gui.theme import (
+    ACCENT_PRIMARY,
+    ACCENT_SECONDARY,
+    BG_DARKEST,
+    PLOT_BG,
+    TEXT_MUTED,
+    TEXT_PRIMARY,
+)
 
 
 class TimeViewer(QWidget):
@@ -38,7 +45,7 @@ class TimeViewer(QWidget):
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(4)
+        layout.setSpacing(8)
 
         # Controls bar
         controls = QHBoxLayout()
@@ -62,14 +69,18 @@ class TimeViewer(QWidget):
             foreground=TEXT_PRIMARY,
             antialias=True,
         )
-        self._plot_widget = pg.PlotWidget()
-        self._plot_widget.showGrid(x=True, y=True, alpha=0.15)
+        self._plot_widget = pg.PlotWidget(background=PLOT_BG)
+        self._plot_widget.showGrid(x=True, y=True, alpha=0.12)
+        # Long recordings: draw a peak-preserving decimation of what is on screen
+        self._plot_widget.setDownsampling(auto=True, mode="peak")
+        self._plot_widget.setClipToView(True)
+        self._plot_widget.addLegend(offset=(-10, 10))
         self._plot_widget.setLabel("bottom", "Time", units="s")
         self._plot_widget.setLabel("left", "Amplitude")
 
         # Region selection
         self._region = pg.LinearRegionItem(
-            brush=pg.mkBrush(78, 168, 245, 30),
+            brush=pg.mkBrush(78, 168, 245, 26),
             pen=pg.mkPen(ACCENT_PRIMARY, width=1),
         )
         self._region.setVisible(False)
@@ -78,9 +89,9 @@ class TimeViewer(QWidget):
 
         # Crosshair
         self._vline = pg.InfiniteLine(angle=90, movable=False,
-                                       pen=pg.mkPen(TEXT_PRIMARY, width=1, style=Qt.DashLine))
+                                       pen=pg.mkPen(TEXT_MUTED, width=1, style=Qt.DashLine))
         self._hline = pg.InfiniteLine(angle=0, movable=False,
-                                       pen=pg.mkPen(TEXT_PRIMARY, width=1, style=Qt.DashLine))
+                                       pen=pg.mkPen(TEXT_MUTED, width=1, style=Qt.DashLine))
         self._plot_widget.addItem(self._vline, ignoreBounds=True)
         self._plot_widget.addItem(self._hline, ignoreBounds=True)
         self._proxy = pg.SignalProxy(
@@ -109,6 +120,16 @@ class TimeViewer(QWidget):
             self._region.setRegion([n * 0.25 / self._sample_rate,
                                      n * 0.75 / self._sample_rate])
 
+    def selection(self) -> tuple[int, int] | None:
+        """Selected ``(start, end)`` sample range, clipped to the data."""
+        if self._samples is None or not self._region.isVisible():
+            return None
+        lo, hi = self._region.getRegion()
+        n = len(self._samples)
+        start = min(n, max(0, int(lo * self._sample_rate)))
+        end = min(n, max(0, int(hi * self._sample_rate)))
+        return (start, end) if end > start else None
+
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
@@ -118,6 +139,9 @@ class TimeViewer(QWidget):
             return
 
         self._plot_widget.clear()
+        legend = self._plot_widget.plotItem.legend
+        if legend is not None:
+            legend.clear()
         self._plot_widget.addItem(self._region)
         self._plot_widget.addItem(self._vline, ignoreBounds=True)
         self._plot_widget.addItem(self._hline, ignoreBounds=True)
@@ -127,12 +151,15 @@ class TimeViewer(QWidget):
         mode = self._mode_combo.currentText()
 
         if mode == "I & Q":
+            # Q first (translucent) so the I trace stays readable on top
+            q_pen = pg.mkColor(ACCENT_SECONDARY)
+            q_pen.setAlpha(150)
+            self._plot_widget.plot(t, self._samples.imag,
+                                   pen=pg.mkPen(q_pen, width=1),
+                                   name="Q")
             self._plot_widget.plot(t, self._samples.real,
                                    pen=pg.mkPen(ACCENT_PRIMARY, width=1),
                                    name="I")
-            self._plot_widget.plot(t, self._samples.imag,
-                                   pen=pg.mkPen(ACCENT_SECONDARY, width=1),
-                                   name="Q")
             self._plot_widget.setLabel("left", "Amplitude")
         elif mode == "Magnitude":
             self._plot_widget.plot(t, np.abs(self._samples),

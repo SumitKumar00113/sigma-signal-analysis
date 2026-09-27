@@ -13,7 +13,6 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
     QFormLayout,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -24,7 +23,8 @@ from PySide6.QtWidgets import (
 
 from src.core.enums import ConfidenceLevel, ModulationType
 from src.dsp.pipeline import PipelineResult
-from src.gui.recording_overview import _format_hz, _InfoRow
+from src.gui.icons import icon
+from src.gui.recording_overview import _format_hz, _InfoRow, section_label
 from src.gui.theme import (
     ACCENT_DANGER,
     ACCENT_SUCCESS,
@@ -32,6 +32,7 @@ from src.gui.theme import (
     TEXT_MUTED,
     TEXT_SECONDARY,
 )
+from src.gui.widgets import MeterRow
 
 SUPPORTED_OVERRIDES: list[ModulationType] = [
     ModulationType.BPSK, ModulationType.QPSK, ModulationType.PSK8,
@@ -69,86 +70,82 @@ class ResultsPanel(QWidget):
         scroll.setFrameShape(QScrollArea.NoFrame)
         body = QWidget()
         layout = QVBoxLayout(body)
-        layout.setSpacing(8)
-
-        title = QLabel("Analysis Results")
-        title.setProperty("role", "heading")
-        layout.addWidget(title)
+        layout.setContentsMargins(0, 4, 6, 4)
+        layout.setSpacing(5)
 
         # --- Verdict ---
-        verdict_group = QGroupBox("Modulation")
-        vg = QVBoxLayout(verdict_group)
+        layout.addWidget(section_label("Modulation"))
         self._mod_label = QLabel("—")
-        self._mod_label.setStyleSheet("font-size: 22px; font-weight: 700; background: transparent;")
-        vg.addWidget(self._mod_label)
+        self._mod_label.setStyleSheet("font-size: 26px; font-weight: 700;")
+        layout.addWidget(self._mod_label)
         self._overall_label = QLabel("No analysis run")
-        self._overall_label.setStyleSheet(f"color: {TEXT_SECONDARY}; background: transparent;")
-        vg.addWidget(self._overall_label)
+        self._overall_label.setStyleSheet(f"color: {TEXT_SECONDARY};")
+        layout.addWidget(self._overall_label)
+        self._confidence = MeterRow("Classifier confidence")
+        layout.addWidget(self._confidence)
         self._candidates_label = QLabel("")
-        self._candidates_label.setStyleSheet(
-            f"color: {TEXT_SECONDARY}; font-size: 12px; background: transparent;"
-        )
+        self._candidates_label.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 12px;")
         self._candidates_label.setWordWrap(True)
-        vg.addWidget(self._candidates_label)
+        layout.addWidget(self._candidates_label)
         self._evidence_label = QLabel("")
-        self._evidence_label.setStyleSheet(
-            f"color: {TEXT_MUTED}; font-size: 11px; background: transparent;"
-        )
+        self._evidence_label.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 11px;")
         self._evidence_label.setWordWrap(True)
         self._evidence_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        vg.addWidget(self._evidence_label)
-        layout.addWidget(verdict_group)
+        layout.addWidget(self._evidence_label)
 
         # --- Parameters ---
-        param_group = QGroupBox("Estimated Parameters")
-        pg_layout = QVBoxLayout(param_group)
+        layout.addWidget(section_label("Estimated parameters"))
         for key in ("Symbol Rate", "SNR (full band)", "SNR (in-band)", "Carrier Offset",
                     "Occupied BW", "Samples / Symbol", "Regions"):
             row = _InfoRow(key)
             self._rows[key] = row
-            pg_layout.addWidget(row)
-        layout.addWidget(param_group)
+            layout.addWidget(row)
 
         # --- Demodulation ---
-        demod_group = QGroupBox("Demodulation")
-        dg = QVBoxLayout(demod_group)
+        layout.addWidget(section_label("Demodulation"))
         for key in ("Symbols", "Bits", "EVM", "Residual CFO", "FSK Tones", "Audio",
                     "Processing Time"):
             row = _InfoRow(key)
             self._rows[key] = row
-            dg.addWidget(row)
-        layout.addWidget(demod_group)
+            layout.addWidget(row)
 
         # --- Overrides ---
-        ov_group = QGroupBox("Analyst Overrides")
-        form = QFormLayout(ov_group)
+        layout.addWidget(section_label("Analyst overrides"))
+        form = QFormLayout()
         form.setSpacing(6)
+        form.setContentsMargins(0, 0, 0, 0)
         self._mod_override = QComboBox()
         self._mod_override.addItem("Auto-detect", None)
         for m in SUPPORTED_OVERRIDES:
             self._mod_override.addItem(m.value, m)
-        form.addRow("Modulation:", self._mod_override)
+        form.addRow("Modulation", self._mod_override)
         self._rs_override = QDoubleSpinBox()
         self._rs_override.setRange(0, 1e9)
         self._rs_override.setDecimals(1)
         self._rs_override.setSuffix(" baud")
         self._rs_override.setSpecialValueText("Auto-detect")
-        form.addRow("Symbol Rate:", self._rs_override)
+        form.addRow("Symbol rate", self._rs_override)
+        layout.addLayout(form)
         btn_row = QHBoxLayout()
-        self._rerun_btn = QPushButton("↻ Re-run Analysis")
+        self._rerun_btn = QPushButton("Re-run analysis")
+        self._rerun_btn.setProperty("primary", True)
+        self._rerun_btn.setIcon(icon("play", "#ffffff", 14))
         self._rerun_btn.clicked.connect(self.rerun_requested.emit)
         btn_row.addWidget(self._rerun_btn)
-        form.addRow(btn_row)
-        layout.addWidget(ov_group)
+        self._reset_btn = QPushButton("Reset")
+        self._reset_btn.setToolTip("Clear the overrides (back to auto-detect)")
+        self._reset_btn.clicked.connect(self.reset_overrides)
+        btn_row.addWidget(self._reset_btn)
+        layout.addLayout(btn_row)
 
         # --- Warnings ---
-        self._warn_group = QGroupBox("Warnings")
+        self._warn_group = QWidget()
         wg = QVBoxLayout(self._warn_group)
+        wg.setContentsMargins(0, 0, 0, 0)
+        wg.addWidget(section_label("Warnings"))
         self._warn_label = QLabel("")
         self._warn_label.setWordWrap(True)
-        self._warn_label.setStyleSheet(
-            f"color: {ACCENT_WARNING}; font-size: 12px; background: transparent;"
-        )
+        self._warn_label.setStyleSheet(f"color: {ACCENT_WARNING}; font-size: 12px;")
         self._warn_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         wg.addWidget(self._warn_label)
         self._warn_group.setVisible(False)
@@ -174,8 +171,19 @@ class ResultsPanel(QWidget):
     def set_busy(self, busy: bool) -> None:
         self._rerun_btn.setEnabled(not busy)
 
+    def reset_overrides(self) -> None:
+        self._mod_override.setCurrentIndex(0)
+        self._rs_override.setValue(0)
+
+    def set_overrides(self, modulation: str | None, symbol_rate: float | None) -> None:
+        idx = self._mod_override.findText(modulation) if modulation else 0
+        self._mod_override.setCurrentIndex(max(0, idx))
+        self._rs_override.setValue(symbol_rate or 0)
+
     def clear(self) -> None:
         self._mod_label.setText("—")
+        self._mod_label.setStyleSheet("font-size: 26px; font-weight: 700;")
+        self._confidence.reset()
         self._overall_label.setText("No analysis run")
         self._candidates_label.setText("")
         self._evidence_label.setText("")
@@ -188,12 +196,10 @@ class ResultsPanel(QWidget):
         color = _CONF_COLOR.get(a.overall_confidence, TEXT_MUTED)
 
         self._mod_label.setText(a.modulation.value)
-        self._mod_label.setStyleSheet(
-            f"font-size: 22px; font-weight: 700; background: transparent; color: {color};"
-        )
+        self._mod_label.setStyleSheet(f"font-size: 26px; font-weight: 700; color: {color};")
         self._overall_label.setText(
-            f"{a.overall_confidence.value}  ·  classifier confidence {a.modulation_confidence:.0%}"
-        )
+            f"{a.overall_confidence.value}  ·  decided by {res.classifier_source}")
+        self._confidence.set(None, f"{a.modulation_confidence:.0%}", a.modulation_confidence)
 
         if a.modulation_candidates:
             parts = [f"{c['modulation']} {c['probability']:.0%}"
@@ -209,7 +215,7 @@ class ResultsPanel(QWidget):
 
         rs = a.symbol_rate_hz
         self._rows["Symbol Rate"].set_value(
-            f"{rs:,.1f} baud  ({a.symbol_rate_confidence:.0%})" if rs > 0 else "—"
+            f"{rs:,.1f} baud  ({min(a.symbol_rate_confidence, 1.0):.0%})" if rs > 0 else "—"
         )
         self._rows["SNR (full band)"].set_value(
             f"{res.snr_db:.1f} dB",
