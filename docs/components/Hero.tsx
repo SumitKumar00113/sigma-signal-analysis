@@ -21,7 +21,7 @@ export default function Hero() {
 
         <div className="hero-cta-group">
           <div className="download-option">
-            <a href="https://github.com/SumitKumar00113/sigma-signal-analysis/releases/download/v0.2.0/SIGMA-Setup.exe" className="btn-hero-primary">
+            <a href="https://github.com/SumitKumar00113/sigma-signal-analysis/releases/download/v0.2.0/SIGMA-Signal-Analysis-v0.2.1-Windows-x64.zip" className="btn-hero-primary">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
                 <path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-13.051-1.8" />
               </svg>

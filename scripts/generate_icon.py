@@ -46,17 +46,28 @@ def create_sigma_icon(size: int = 256) -> Image.Image:
 
 def main():
     os.makedirs("assets", exist_ok=True)
-    sizes = [256, 128, 64, 48, 32, 16]
-    images = [create_sigma_icon(s) for s in sizes]
-    
+    sizes = [(256, 256), (128, 128), (64, 64), (48, 48), (32, 32), (16, 16)]
+    png_path = os.path.join("assets", "sigma_app_icon.png")
     ico_path = os.path.join("assets", "sigma.ico")
-    images[0].save(
-        ico_path,
-        format="ICO",
-        sizes=[(s, s) for s in sizes],
-        append_images=images[1:]
-    )
-    print(f"Icon generated successfully at {ico_path}")
+
+    if os.path.exists(png_path):
+        img = Image.open(png_path)
+        img.save(
+            ico_path,
+            format="ICO",
+            sizes=sizes
+        )
+        print(f"Icon generated successfully from {png_path} -> {ico_path}")
+    else:
+        sizes_int = [s[0] for s in sizes]
+        images = [create_sigma_icon(s) for s in sizes_int]
+        images[0].save(
+            ico_path,
+            format="ICO",
+            sizes=sizes,
+            append_images=images[1:]
+        )
+        print(f"Icon generated procedurally at {ico_path}")
 
 if __name__ == "__main__":
     main()

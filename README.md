@@ -15,14 +15,14 @@
 
 ## Download
 
-**[⬇ Download SIGMA Signal Analysis for Windows (v0.2.0, .exe Setup, 85 MB)](https://github.com/SumitKumar00113/sigma-signal-analysis/releases/download/v0.2.0/SIGMA-Setup.exe)**
+**[⬇ Download SIGMA Signal Analysis for Windows (v0.2.1, .zip Portable Release, 125 MB)](https://github.com/SumitKumar00113/sigma-signal-analysis/releases/download/v0.2.0/SIGMA-Signal-Analysis-v0.2.1-Windows-x64.zip)**
 
 **[⬇ Download Sigma Signal Analysis for Mac (v0.2.1, .zip, 78 MB)](https://github.com/SumitKumar00113/sigma-signal-analysis/releases/download/v0.2.1/Sigma-Signal-Analysis-0.2.1-macOS-arm64.zip)**
 
 ### Windows Installation
-1. Download **SIGMA-Setup.exe** above.
-2. Double-click to run the setup installer (Inno Setup) and follow the wizard. No Python or additional dependencies are required.
-3. Launch **SIGMA Signal Analysis** from your Start Menu or Desktop shortcut.
+1. Download **SIGMA-Signal-Analysis-v0.2.1-Windows-x64.zip** above (or `SIGMA-Setup.exe`).
+2. Extract the `.zip` archive and run `Sigma.exe` directly (or run the setup installer). No Python or additional dependencies are required.
+3. Launch **SIGMA Signal Analysis** to begin signal inspection and decoding.
 
 ### macOS Installation
 1. Download the macOS zip package above and double-click to extract **Sigma Signal Analysis.app**.

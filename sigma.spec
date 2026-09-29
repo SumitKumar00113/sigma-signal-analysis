@@ -87,6 +87,7 @@ exe = EXE(
     console=False,
     argv_emulation=False,
     target_arch=None,
+    icon=str(ROOT / "assets" / "sigma.ico"),
 )
 
 coll = COLLECT(

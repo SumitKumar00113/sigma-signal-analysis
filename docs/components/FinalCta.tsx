@@ -15,7 +15,7 @@ export default function FinalCta() {
 
         <div className="download-options">
           <div className="download-option">
-            <a href="https://github.com/SumitKumar00113/sigma-signal-analysis/releases/download/v0.2.0/SIGMA-Setup.exe" className="btn-hero-primary">
+            <a href="https://github.com/SumitKumar00113/sigma-signal-analysis/releases/download/v0.2.0/SIGMA-Signal-Analysis-v0.2.1-Windows-x64.zip" className="btn-hero-primary">
               Download for Windows
             </a>
             <p className="download-requirement">Windows 10/11, 64-bit</p>
